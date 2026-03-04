@@ -144,6 +144,17 @@ export function PublishVehicleDialog({ isOpen, onClose, vehicle }: PublishVehicl
 
       await setDoc(doc(db, 'public_listings', listingId), commonData, { merge: true });
       
+      // Also ensure global registry is updated with descriptive data
+      await setDoc(doc(db, 'allVehicles', normalizedPlate), {
+        licensePlate: normalizedPlate,
+        make: vehicle.make,
+        model: vehicle.model,
+        year: vehicle.year,
+        currentOdometerReading: vehicle.currentOdometerReading,
+        ownerId: auth.currentUser.uid,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+
       await updateDoc(doc(db, 'users', auth.currentUser.uid, 'vehicles', vehicle.id), {
         isPublished: true,
         price: formData.price,

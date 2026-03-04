@@ -2,9 +2,9 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, sendPasswordResetEmail } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp, writeBatch } from 'firebase/firestore';
-import { useFirestore } from '@/firebase';
+import { useFirestore, useAuth } from '@/firebase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -12,23 +12,28 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2 } from 'lucide-react';
+import { Loader2, KeyRound } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [resetEmail, setResetEmail] = useState('');
   const [name, setName] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [userType, setUserType] = useState('CarOwner');
   const [orgNumber, setOrgNumber] = useState('');
+  const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
   
   const router = useRouter();
   const db = useFirestore();
+  const auth = useAuth();
   const { toast } = useToast();
-  const auth = getAuth();
 
   const handleAuth = async (type: 'login' | 'signup') => {
+    if (!auth || !db) return;
     setLoading(true);
     try {
       if (type === 'signup') {
@@ -37,10 +42,10 @@ export default function LoginPage() {
 
         await updateProfile(user, { displayName: name });
 
-        const batch = writeBatch(db!);
+        const batch = writeBatch(db);
         
         // Private Profile
-        const userRef = doc(db!, 'users', user.uid);
+        const userRef = doc(db, 'users', user.uid);
         batch.set(userRef, {
           id: user.uid,
           email,
@@ -53,7 +58,7 @@ export default function LoginPage() {
         });
 
         // Public "Look-up" Profile
-        const publicProfileRef = doc(db!, 'public_profiles', user.uid);
+        const publicProfileRef = doc(db, 'public_profiles', user.uid);
         batch.set(publicProfileRef, {
           id: user.uid,
           name,
@@ -62,7 +67,7 @@ export default function LoginPage() {
         });
 
         if (userType === 'Workshop') {
-          const workshopRef = doc(db!, 'workshops', user.uid);
+          const workshopRef = doc(db, 'workshops', user.uid);
           batch.set(workshopRef, {
             id: user.uid,
           });
@@ -89,6 +94,38 @@ export default function LoginPage() {
     }
   };
 
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!auth) return;
+    if (!resetEmail) {
+      toast({
+        variant: "destructive",
+        title: "E-post saknas",
+        description: "Vänligen fyll i din e-postadress.",
+      });
+      return;
+    }
+
+    setResetLoading(true);
+    try {
+      await sendPasswordResetEmail(auth, resetEmail);
+      toast({
+        title: "Begäran skickad",
+        description: `Om en användare finns med e-post ${resetEmail} har en länk skickats. Kontrollera även skräpposten!`,
+      });
+      setIsResetDialogOpen(false);
+      setResetEmail('');
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Kunde inte skicka mejl",
+        description: error.message || "Ett fel uppstod vid begäran om lösenordsåterställning.",
+      });
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
   return (
     <div className="container max-w-md mx-auto py-20 px-4">
       <Tabs defaultValue="login" className="w-full">
@@ -109,7 +146,43 @@ export default function LoginPage() {
                 <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="namn@exempel.se" />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="password">Lösenord</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="password">Lösenord</Label>
+                  <Dialog open={isResetDialogOpen} onOpenChange={setIsResetDialogOpen}>
+                    <DialogTrigger asChild>
+                      <Button variant="link" className="px-0 font-normal text-xs text-primary hover:text-primary/80">
+                        Glömt lösenord?
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="glass-card sm:max-w-md">
+                      <DialogHeader>
+                        <DialogTitle>Återställ lösenord</DialogTitle>
+                        <DialogDescription>
+                          Ange din e-postadress så skickar vi en länk för att återställa ditt lösenord. Kom ihåg att kontrollera skräpposten!
+                        </DialogDescription>
+                      </DialogHeader>
+                      <form onSubmit={handleForgotPassword} className="space-y-4 pt-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="reset-email">E-postadress</Label>
+                          <Input 
+                            id="reset-email" 
+                            type="email" 
+                            placeholder="namn@exempel.se"
+                            value={resetEmail}
+                            onChange={(e) => setResetEmail(e.target.value)}
+                            required
+                          />
+                        </div>
+                        <DialogFooter>
+                          <Button type="submit" className="w-full rounded-full" disabled={resetLoading}>
+                            {resetLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <KeyRound className="mr-2 h-4 w-4" />}
+                            Skicka återställningslänk
+                          </Button>
+                        </DialogFooter>
+                      </form>
+                    </DialogContent>
+                  </Dialog>
+                </div>
                 <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
               </div>
             </CardContent>

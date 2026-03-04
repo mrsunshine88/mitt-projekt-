@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useRef, useEffect } from 'react';
@@ -9,7 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Camera, Loader2, CheckCircle2, AlertTriangle, ShieldCheck, Lock, User, Building2, Upload } from 'lucide-react';
+import { Camera, Loader2, CheckCircle2, AlertTriangle, ShieldCheck, User, Building2 } from 'lucide-react';
 import { VehicleLog, ServiceCategory, PerformedBy } from '@/types/autolog';
 import { verifyServiceDocument } from '@/ai/flows/verify-service-document';
 import { extractReceiptData } from '@/ai/flows/extract-receipt-data';
@@ -21,9 +20,8 @@ interface LogEventDialogProps {
   onClose: () => void;
   onSubmit: (log: Partial<VehicleLog>) => void;
   currentOdometer?: number;
-  inspectionFloor?: number; // The latest official inspection value
+  inspectionFloor?: number;
   licensePlate?: string;
-  lastUpdateAt?: any;
 }
 
 export function LogEventDialog({ 
@@ -33,12 +31,9 @@ export function LogEventDialog({
   currentOdometer = 0, 
   inspectionFloor = 0,
   licensePlate = "", 
-  lastUpdateAt 
 }: LogEventDialogProps) {
   const [loading, setLoading] = useState(false);
   const [verifying, setVerifying] = useState(false);
-  const [plateMismatch, setPlateMismatch] = useState<string | null>(null);
-  const [manipulationAlert, setManipulationAlert] = useState<string | null>(null);
   const [aiVerified, setAiVerified] = useState(false);
   const [isInspectionDoc, setIsInspectionDoc] = useState(false);
   
@@ -61,8 +56,6 @@ export function LogEventDialog({
   useEffect(() => {
     if (isOpen) {
       setFormData(prev => ({ ...prev, odometer: currentOdometer, performedBy: 'Owner' }));
-      setPlateMismatch(null);
-      setManipulationAlert(null);
       setAiVerified(false);
       setIsInspectionDoc(false);
     }
@@ -81,8 +74,6 @@ export function LogEventDialog({
     if (!file) return;
 
     setVerifying(true);
-    setPlateMismatch(null);
-    setManipulationAlert(null);
     
     const reader = new FileReader();
     reader.onload = async (event) => {
@@ -95,19 +86,6 @@ export function LogEventDialog({
         ]);
 
         if (verification.isServiceDocument) {
-          if (extraction.manipulationRisk !== 'low') {
-            setManipulationAlert(extraction.manipulationReason || "AI har upptäckt potentiell manipulation av siffror i dokumentet.");
-          }
-
-          const extractedPlate = extraction.licensePlate?.toUpperCase().replace(/\s/g, '');
-          const currentPlate = licensePlate.toUpperCase().replace(/\s/g, '');
-          
-          if (extractedPlate && extractedPlate !== currentPlate) {
-            setPlateMismatch(extractedPlate);
-          }
-
-          const docOdo = extraction.odometerReading || 0;
-          
           toast({
             title: extraction.isInspection ? "Besiktning identifierad!" : "Dokument verifierat!",
             description: "AI har fyllt i detaljerna åt dig.",
@@ -121,10 +99,9 @@ export function LogEventDialog({
             photoUrl: dataUri,
             category: extraction.isInspection ? 'Besiktning' : ((extraction.category as ServiceCategory) || prev.category),
             date: extraction.date || prev.date,
-            odometer: docOdo || prev.odometer,
+            odometer: extraction.odometerReading || prev.odometer,
             cost: extraction.totalCost || prev.cost,
             notes: extraction.serviceSummary || prev.notes,
-            orgNumber: extraction.organizationNumber,
             isVerified: true,
             isLocked: true,
             performedBy: extraction.isInspection ? 'Workshop' : 'Workshop',
@@ -149,15 +126,6 @@ export function LogEventDialog({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (manipulationAlert) {
-      toast({
-        variant: "destructive",
-        title: "Säkerhetsspärr",
-        description: "Dokumentet nekas pga risk för manipulation.",
-      });
-      return;
-    }
-
     if (isIllegalOdometer) {
       toast({
         variant: "destructive",
@@ -189,161 +157,125 @@ export function LogEventDialog({
     });
     setAiVerified(false);
     setIsInspectionDoc(false);
-    setPlateMismatch(null);
-    setManipulationAlert(null);
   };
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="w-[95vw] sm:max-w-[500px] glass-card border-white/10 text-foreground overflow-y-auto max-h-[95vh] rounded-3xl p-6">
-        <DialogHeader className="space-y-3">
-          <DialogTitle className="text-2xl font-headline flex items-center gap-2">
-            Logga händelse
-            {aiVerified && <ShieldCheck className="w-6 h-6 text-green-400" />}
-          </DialogTitle>
-          <DialogDescription className="text-sm">
-            Fota besiktning eller kvitto för att verifiera bilens historik och mätarställning.
-          </DialogDescription>
-        </DialogHeader>
+      <DialogContent className="w-full sm:max-w-[500px] h-[100dvh] sm:h-auto sm:max-h-[90vh] overflow-y-auto p-0 gap-0 border-none sm:border glass-card rounded-none sm:rounded-[2rem]">
+        <div className="p-6 pb-24 sm:pb-6 space-y-6">
+          <DialogHeader className="text-left">
+            <DialogTitle className="text-2xl font-headline flex items-center gap-2">
+              Logga händelse
+              {aiVerified && <ShieldCheck className="w-6 h-6 text-green-400" />}
+            </DialogTitle>
+            <DialogDescription className="text-sm">
+              Fota kvitto eller protokoll för att verifiera historiken.
+            </DialogDescription>
+          </DialogHeader>
 
-        {isIllegalOdometer && (
-          <Alert variant="destructive" className="bg-destructive/10 border-destructive/20 mb-4 rounded-2xl">
-            <AlertTriangle className="h-4 w-4" />
-            <AlertTitle>Otillåten mätarställning</AlertTitle>
-            <AlertDescription className="text-xs">
-              {isBelowFloor 
-                ? `Värdet understiger bilens lägsta tillåtna nivå (${inspectionFloor} mil).`
-                : `Du försöker sänka miltalet utan ett besiktningsprotokoll.`}
-            </AlertDescription>
-          </Alert>
-        )}
+          {isIllegalOdometer && (
+            <Alert variant="destructive" className="bg-destructive/10 border-destructive/20 rounded-2xl">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Problem med mätaren</AlertTitle>
+              <AlertDescription className="text-xs">
+                Mätarställningen kan inte vara lägre än nuvarande nivå utan verifierad besiktning.
+              </AlertDescription>
+            </Alert>
+          )}
 
-        <form onSubmit={handleSubmit} className="space-y-6 pt-2">
-          <div className="space-y-3">
-            <Label className="text-xs font-bold uppercase tracking-wider opacity-60">Dokumentation</Label>
+          <form onSubmit={handleSubmit} className="space-y-6">
             <div 
-              className={`border-2 border-dashed rounded-2xl p-8 flex flex-col items-center justify-center gap-4 transition-all touch-target h-40 ${aiVerified ? 'border-green-500 bg-green-500/5' : 'border-white/10 active:scale-[0.98] bg-white/5'}`}
+              className={`border-2 border-dashed rounded-[1.5rem] p-8 flex flex-col items-center justify-center gap-3 transition-all h-36 ${aiVerified ? 'border-green-500 bg-green-500/5' : 'border-white/10 bg-white/5 active:scale-95'}`}
               onClick={() => fileInputRef.current?.click()}
             >
               {verifying ? (
                 <>
-                  <Loader2 className="w-10 h-10 animate-spin text-primary" />
-                  <p className="text-sm font-bold animate-pulse text-primary uppercase tracking-widest">AI Skannar...</p>
+                  <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                  <p className="text-sm font-bold animate-pulse text-primary">AI SKANNAR...</p>
                 </>
               ) : aiVerified ? (
                 <>
-                  <div className="h-12 w-12 rounded-full bg-green-500/20 flex items-center justify-center">
-                    <CheckCircle2 className="w-8 h-8 text-green-400" />
-                  </div>
-                  <p className="text-sm font-bold text-green-400 uppercase">{isInspectionDoc ? 'Besiktning klar' : 'Kvitto verifierat'}</p>
+                  <CheckCircle2 className="w-8 h-8 text-green-400" />
+                  <p className="text-sm font-bold text-green-400 uppercase">Dokument verifierat</p>
                 </>
               ) : (
                 <>
-                  <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center text-primary shadow-lg">
-                    <Camera className="w-8 h-8" />
+                  <div className="w-12 h-12 rounded-2xl bg-primary/20 flex items-center justify-center text-primary">
+                    <Camera className="w-6 h-6" />
                   </div>
                   <div className="text-center">
-                    <p className="text-sm font-bold uppercase">Fota dokument</p>
-                    <p className="text-[10px] text-muted-foreground mt-1">Öppnar mobilkameran</p>
+                    <p className="text-sm font-bold">FOTA DOKUMENT</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">Kvitto eller Besiktning</p>
                   </div>
                 </>
               )}
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                className="hidden" 
-                accept="image/*" 
-                capture="environment" // Forces back camera on mobile
-                onChange={handleFileChange} 
-              />
+              <input type="file" ref={fileInputRef} className="hidden" accept="image/*" capture="environment" onChange={handleFileChange} />
             </div>
-          </div>
 
-          <div className="space-y-3">
-            <Label className="text-xs font-bold uppercase tracking-wider opacity-60">Utförd av</Label>
-            <RadioGroup 
-              value={formData.performedBy} 
-              onValueChange={(v) => setFormData({...formData, performedBy: v as PerformedBy})}
-              className="flex gap-4"
-            >
-              <div className="flex-1">
-                <RadioGroupItem value="Owner" id="owner-diy" className="sr-only" />
-                <Label 
-                  htmlFor="owner-diy" 
-                  className={`flex items-center justify-center gap-2 p-3 rounded-xl border-2 transition-all cursor-pointer ${formData.performedBy === 'Owner' ? 'bg-primary/10 border-primary text-primary' : 'bg-white/5 border-transparent opacity-60'}`}
-                >
-                  <User className="w-4 h-4" /> Eget
-                </Label>
+            <div className="space-y-3">
+              <Label className="text-xs font-bold uppercase tracking-wider opacity-60 ml-1">Utförd av</Label>
+              <RadioGroup value={formData.performedBy} onValueChange={(v) => setFormData({...formData, performedBy: v as PerformedBy})} className="flex gap-3">
+                <div className="flex-1">
+                  <RadioGroupItem value="Owner" id="owner-diy" className="sr-only" />
+                  <Label htmlFor="owner-diy" className={`flex items-center justify-center gap-2 p-3 rounded-xl border-2 transition-all cursor-pointer h-12 ${formData.performedBy === 'Owner' ? 'bg-primary/10 border-primary text-primary' : 'bg-white/5 border-transparent opacity-60'}`}>
+                    <User className="w-4 h-4" /> Eget
+                  </Label>
+                </div>
+                <div className="flex-1">
+                  <RadioGroupItem value="Workshop" id="workshop-pro" className="sr-only" />
+                  <Label htmlFor="workshop-pro" className={`flex items-center justify-center gap-2 p-3 rounded-xl border-2 transition-all cursor-pointer h-12 ${formData.performedBy === 'Workshop' ? 'bg-primary/10 border-primary text-primary' : 'bg-white/5 border-transparent opacity-60'}`}>
+                    <Building2 className="w-4 h-4" /> Verkstad
+                  </Label>
+                </div>
+              </RadioGroup>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label className="text-xs font-bold uppercase opacity-60 ml-1">Kategori</Label>
+                <Select value={formData.category} onValueChange={(v) => setFormData({...formData, category: v as ServiceCategory})}>
+                  <SelectTrigger className="h-12 bg-white/5 border-white/10 rounded-xl">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Service">Service</SelectItem>
+                    <SelectItem value="Reparation">Reparation</SelectItem>
+                    <SelectItem value="Däck">Däck</SelectItem>
+                    <SelectItem value="Besiktning">Besiktning</SelectItem>
+                    <SelectItem value="Uppgradering">Uppgradering</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-              <div className="flex-1">
-                <RadioGroupItem value="Workshop" id="workshop-pro" className="sr-only" />
-                <Label 
-                  htmlFor="workshop-pro" 
-                  className={`flex items-center justify-center gap-2 p-3 rounded-xl border-2 transition-all cursor-pointer ${formData.performedBy === 'Workshop' ? 'bg-primary/10 border-primary text-primary' : 'bg-white/5 border-transparent opacity-60'}`}
-                >
-                  <Building2 className="w-4 h-4" /> Verkstad
-                </Label>
+              <div className="space-y-2">
+                <Label className="text-xs font-bold uppercase opacity-60 ml-1">Datum</Label>
+                <Input type="date" value={formData.date} className="h-12 bg-white/5 border-white/10 rounded-xl" onChange={(e) => setFormData({...formData, date: e.target.value})} />
               </div>
-            </RadioGroup>
-          </div>
+            </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label className="text-[10px] font-bold uppercase opacity-60">Kategori</Label>
-              <Select value={formData.category} onValueChange={(v) => setFormData({...formData, category: v as ServiceCategory})}>
-                <SelectTrigger className="h-12 bg-white/5 border-white/10 rounded-xl">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Service">Service</SelectItem>
-                  <SelectItem value="Reparation">Reparation</SelectItem>
-                  <SelectItem value="Däck">Däck</SelectItem>
-                  <SelectItem value="Besiktning">Besiktning</SelectItem>
-                  <SelectItem value="Uppgradering">Uppgradering</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label className={`text-xs font-bold uppercase ml-1 ${isIllegalOdometer ? "text-destructive" : "opacity-60"}`}>Mätare (mil)</Label>
+                <Input type="number" className={`h-12 bg-white/5 rounded-xl ${isIllegalOdometer ? 'border-destructive ring-destructive/20' : 'border-white/10'}`} value={formData.odometer ?? ''} onChange={(e) => handleNumberChange('odometer', e.target.value)} required />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs font-bold uppercase opacity-60 ml-1">Pris (kr)</Label>
+                <Input type="number" className="h-12 bg-white/5 border-white/10 rounded-xl" value={formData.cost || ''} onChange={(e) => handleNumberChange('cost', e.target.value)} />
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label className="text-[10px] font-bold uppercase opacity-60">Datum</Label>
-              <Input 
-                type="date" 
-                value={formData.date}
-                className="h-12 bg-white/5 border-white/10 rounded-xl"
-                onChange={(e) => setFormData({...formData, date: e.target.value})}
-              />
-            </div>
-          </div>
 
-          <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label className={`text-[10px] font-bold uppercase ${isIllegalOdometer ? "text-destructive" : "opacity-60"}`}>Mätare (mil)</Label>
-              <Input 
-                type="number" 
-                className={`h-12 bg-white/5 rounded-xl ${isIllegalOdometer ? 'border-destructive ring-destructive/20' : 'border-white/10'}`}
-                value={formData.odometer ?? ''}
-                onChange={(e) => handleNumberChange('odometer', e.target.value)}
-                required
-              />
+              <Label className="text-xs font-bold uppercase opacity-60 ml-1">Anteckningar</Label>
+              <Textarea value={formData.notes} className="bg-white/5 border-white/10 rounded-xl min-h-[80px]" onChange={(e) => setFormData({...formData, notes: e.target.value})} />
             </div>
-            <div className="space-y-2">
-              <Label className="text-[10px] font-bold uppercase opacity-60">Pris (kr)</Label>
-              <Input 
-                type="number" 
-                className="h-12 bg-white/5 border-white/10 rounded-xl"
-                value={formData.cost || ''}
-                onChange={(e) => handleNumberChange('cost', e.target.value)}
-              />
-            </div>
-          </div>
 
-          <DialogFooter className="pt-4 gap-2 sm:flex-row flex-col">
-            <Button type="submit" disabled={loading || isIllegalOdometer || !!plateMismatch} className="w-full h-14 rounded-2xl font-bold text-lg shadow-xl shadow-primary/20">
-              {loading && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
-              {aiVerified ? "Spara & Verifiera" : "Spara händelse"}
-            </Button>
-            <Button variant="ghost" type="button" onClick={onClose} className="h-12 rounded-xl opacity-60">Avbryt</Button>
-          </DialogFooter>
-        </form>
+            <div className="fixed bottom-0 left-0 right-0 p-4 bg-background/90 backdrop-blur-md sm:relative sm:p-0 sm:bg-transparent border-t border-white/5 sm:border-none flex gap-3 safe-p-bottom">
+              <Button variant="ghost" type="button" onClick={onClose} className="flex-1 h-14 rounded-2xl md:hidden">Avbryt</Button>
+              <Button type="submit" disabled={loading || isIllegalOdometer} className="flex-[2] h-14 rounded-2xl font-bold text-lg shadow-xl shadow-primary/20">
+                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : aiVerified ? "Verifiera & Spara" : "Spara"}
+              </Button>
+            </div>
+          </form>
+        </div>
       </DialogContent>
     </Dialog>
   );

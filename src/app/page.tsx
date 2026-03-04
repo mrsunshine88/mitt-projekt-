@@ -1,4 +1,3 @@
-
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -127,7 +126,7 @@ export default function Home() {
       <footer className="py-12 border-t border-white/5 bg-background">
         <div className="container mx-auto px-4 text-center">
           <p className="font-headline font-bold text-xl gradient-text mb-4">AutoLog</p>
-          <p className="text-sm text-muted-foreground">© 2024 AutoLog - För en ärligare bilmarknad.</p>
+          <p className="text-sm text-muted-foreground">© 2026 AutoLog - För en ärligare bilmarknad.</p>
         </div>
       </footer>
     </div>

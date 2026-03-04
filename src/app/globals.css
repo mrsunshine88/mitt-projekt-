@@ -1,4 +1,3 @@
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -24,7 +23,7 @@
     --border: 213 18% 21%;
     --input: 213 18% 21%;
     --ring: 215 91% 64%;
-    --radius: 0.75rem;
+    --radius: 1rem;
   }
 }
 
@@ -40,8 +39,12 @@
   h1, h2, h3, h4, h5, h6 {
     @apply font-headline font-bold tracking-tight;
   }
-  input, textarea, button, select {
-    @apply text-base; /* Prevents iOS zoom */
+  /* Bättre touch targets för input */
+  input, textarea, select {
+    @apply h-12 text-base md:text-sm !important;
+  }
+  button {
+    @apply touch-none;
   }
 }
 
@@ -53,11 +56,17 @@
   @apply bg-clip-text text-transparent bg-gradient-to-r from-[#5096F7] to-[#70C9E1];
 }
 
-/* Mobile-specific utilities */
+/* Mobile specific fixes */
 .safe-p-bottom {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
 .touch-target {
-  @apply min-h-[44px] min-w-[44px] flex items-center justify-center;
+  @apply min-h-[48px] min-w-[48px] flex items-center justify-center;
+}
+
+@media (max-width: 640px) {
+  .container {
+    @apply px-4;
+  }
 }

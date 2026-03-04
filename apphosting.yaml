@@ -4,4 +4,10 @@
 runConfig:
   # Increase this value if you'd like to automatically spin up
   # more instances in response to increased traffic.
-  maxInstances: 1
+  maxInstances: 5
+  memory: 1Gi
+  cpu: 1
+
+env:
+  - variable: NODE_ENV
+    value: production

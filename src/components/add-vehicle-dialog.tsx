@@ -43,10 +43,10 @@ export function AddVehicleDialog({ isOpen, onClose }: AddVehicleDialogProps) {
     }));
   };
 
-  const checkExistingVehicle = async (plate: string) => {
+  const checkExistingVehicle = async (plateInput: string) => {
     if (!db) return;
-    const normalizedPlate = plate.toUpperCase().trim().replace(/\s/g, '');
-    if (normalizedPlate.length < 4) return;
+    const normalizedPlate = plateInput.toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
+    if (normalizedPlate.length < 3) return;
 
     try {
       const globalRef = doc(db, 'allVehicles', normalizedPlate);
@@ -55,6 +55,8 @@ export function AddVehicleDialog({ isOpen, onClose }: AddVehicleDialogProps) {
         const data = globalSnap.data();
         if (!data.ownerId) {
           setExistingHistoryFound(true);
+          if (data.make && !formData.make) setFormData(prev => ({ ...prev, make: data.make }));
+          if (data.model && !formData.model) setFormData(prev => ({ ...prev, model: data.model }));
         } else if (data.ownerId !== user?.uid) {
           setError("Detta fordon är redan registrerat av en annan aktiv användare.");
         } else {
@@ -74,21 +76,21 @@ export function AddVehicleDialog({ isOpen, onClose }: AddVehicleDialogProps) {
     if (!user || !db) return;
     setError(null);
 
-    if (!formData.make) {
-      setError("Vänligen välj ett bilmärke.");
+    const plate = formData.licensePlate.toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
+    if (!plate) {
+      setError("Ange ett giltigt registreringsnummer.");
       return;
     }
 
     setLoading(true);
     try {
-      const plate = formData.licensePlate.toUpperCase().trim().replace(/\s/g, '');
       const globalRef = doc(db, 'allVehicles', plate);
       const globalSnap = await getDoc(globalRef);
       
       if (globalSnap.exists()) {
         const existingData = globalSnap.data();
         if (existingData.ownerId && existingData.ownerId !== user.uid) {
-          setError("Detta fordon är redan registrerat av en annan användare. Kontakta support om detta är felaktigt.");
+          setError("Detta fordon är redan registrerat av en annan användare.");
           setLoading(false);
           return;
         }
@@ -107,26 +109,25 @@ export function AddVehicleDialog({ isOpen, onClose }: AddVehicleDialogProps) {
         updatedAt: serverTimestamp(),
       });
 
+      // Synka till det globala registret OMEDELBART med rätt ID
       await setDoc(globalRef, {
         licensePlate: plate,
+        make: formData.make,
+        model: formData.model,
+        year: formData.year,
+        currentOdometerReading: formData.currentOdometerReading,
         ownerId: user.uid,
         updatedAt: serverTimestamp(),
       }, { merge: true });
 
       toast({
         title: existingHistoryFound ? "Historik återställd!" : "Fordon tillagt!",
-        description: existingHistoryFound 
-          ? `Bilen hittades i systemet och dess tidigare historik har nu kopplats till ditt konto.`
-          : `${formData.make} ${formData.model} har sparats i ditt garage.`,
+        description: `${formData.make} ${formData.model} har sparats.`,
       });
       onClose();
       resetForm();
     } catch (error: any) {
-      toast({
-        variant: "destructive",
-        title: "Ett fel uppstod",
-        description: error.message,
-      });
+      toast({ variant: "destructive", title: "Fel", description: error.message });
     } finally {
       setLoading(false);
     }
@@ -146,7 +147,7 @@ export function AddVehicleDialog({ isOpen, onClose }: AddVehicleDialogProps) {
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if(!open) resetForm(); onClose(); }}>
-      <DialogContent className="sm:max-w-[425px] glass-card border-white/10 text-foreground">
+      <DialogContent className="sm:max-w-[425px] glass-card border-white/10 text-foreground rounded-3xl">
         <DialogHeader>
           <DialogTitle className="text-2xl font-headline">Lägg till fordon</DialogTitle>
           <DialogDescription className="text-muted-foreground">
@@ -155,18 +156,10 @@ export function AddVehicleDialog({ isOpen, onClose }: AddVehicleDialogProps) {
         </DialogHeader>
 
         {error && (
-          <Alert variant="destructive" className="bg-destructive/10 border-destructive/20">
+          <Alert variant="destructive" className="bg-destructive/10 border-destructive/20 rounded-2xl">
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>Problem</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
-
-        {existingHistoryFound && !error && (
-          <Alert className="bg-green-500/10 border-green-500/20 text-green-400">
-            <ShieldCheck className="h-4 w-4" />
-            <AlertTitle>Historik hittad!</AlertTitle>
-            <AlertDescription>Det finns tidigare verifierad historik för detta fordon som kommer att kopplas till ditt konto.</AlertDescription>
           </Alert>
         )}
 
@@ -176,7 +169,7 @@ export function AddVehicleDialog({ isOpen, onClose }: AddVehicleDialogProps) {
             <Input 
               id="licensePlate" 
               placeholder="ABC 123" 
-              className="bg-white/5 uppercase"
+              className="bg-white/5 uppercase h-12 rounded-xl"
               value={formData.licensePlate}
               onChange={(e) => {
                 setFormData({...formData, licensePlate: e.target.value.toUpperCase()});
@@ -190,7 +183,7 @@ export function AddVehicleDialog({ isOpen, onClose }: AddVehicleDialogProps) {
             <div className="space-y-2">
               <Label htmlFor="make">Märke</Label>
               <Select value={formData.make} onValueChange={(v) => setFormData({...formData, make: v})}>
-                <SelectTrigger className="bg-white/5 border-white/10">
+                <SelectTrigger className="bg-white/5 border-white/10 h-12 rounded-xl">
                   <SelectValue placeholder="Välj märke" />
                 </SelectTrigger>
                 <SelectContent className="max-h-60">
@@ -205,7 +198,7 @@ export function AddVehicleDialog({ isOpen, onClose }: AddVehicleDialogProps) {
               <Input 
                 id="model" 
                 placeholder="T.ex. Model 3" 
-                className="bg-white/5"
+                className="bg-white/5 h-12 rounded-xl"
                 value={formData.model}
                 onChange={(e) => setFormData({...formData, model: e.target.value})}
                 required 
@@ -219,7 +212,7 @@ export function AddVehicleDialog({ isOpen, onClose }: AddVehicleDialogProps) {
               <Input 
                 id="year" 
                 type="number" 
-                className="bg-white/5"
+                className="bg-white/5 h-12 rounded-xl"
                 value={formData.year || ''}
                 onChange={(e) => handleNumberChange('year', e.target.value)}
                 required 
@@ -230,7 +223,7 @@ export function AddVehicleDialog({ isOpen, onClose }: AddVehicleDialogProps) {
               <Input 
                 id="odometer" 
                 type="number" 
-                className="bg-white/5"
+                className="bg-white/5 h-12 rounded-xl"
                 value={formData.currentOdometerReading || ''}
                 onChange={(e) => handleNumberChange('currentOdometerReading', e.target.value)}
                 required 
@@ -239,10 +232,10 @@ export function AddVehicleDialog({ isOpen, onClose }: AddVehicleDialogProps) {
           </div>
 
           <DialogFooter className="pt-4">
-            <Button variant="ghost" type="button" onClick={onClose}>Avbryt</Button>
-            <Button type="submit" disabled={loading || !!error}>
+            <Button variant="ghost" type="button" onClick={onClose} className="rounded-xl">Avbryt</Button>
+            <Button type="submit" disabled={loading || !!error} className="font-bold h-12 px-8 rounded-xl">
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {existingHistoryFound ? "Hämta & Spara" : "Spara fordon"}
+              Spara bil
             </Button>
           </DialogFooter>
         </form>
