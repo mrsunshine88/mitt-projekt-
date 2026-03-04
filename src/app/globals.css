@@ -1,0 +1,63 @@
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 213 18% 12%;
+    --foreground: 210 40% 98%;
+    --card: 213 18% 16%;
+    --card-foreground: 210 40% 98%;
+    --popover: 213 18% 12%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 215 91% 64%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 213 18% 21%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 213 18% 21%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 192 63% 66%;
+    --accent-foreground: 213 18% 12%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 213 18% 21%;
+    --input: 213 18% 21%;
+    --ring: 215 91% 64%;
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    @apply bg-background text-foreground font-body antialiased;
+    overscroll-behavior-y: contain;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-headline font-bold tracking-tight;
+  }
+  input, textarea, button, select {
+    @apply text-base; /* Prevents iOS zoom */
+  }
+}
+
+.glass-card {
+  @apply bg-card/50 backdrop-blur-md border border-white/10 shadow-xl;
+}
+
+.gradient-text {
+  @apply bg-clip-text text-transparent bg-gradient-to-r from-[#5096F7] to-[#70C9E1];
+}
+
+/* Mobile-specific utilities */
+.safe-p-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.touch-target {
+  @apply min-h-[44px] min-w-[44px] flex items-center justify-center;
+}

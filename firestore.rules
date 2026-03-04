@@ -1,0 +1,88 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isNotBanned() {
+      return !exists(/databases/$(database)/documents/bannedUsers/$(request.auth.uid));
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId && isNotBanned();
+    }
+
+    function isSystemOwner() {
+      return isSignedIn() && (
+        request.auth.token.email == 'apersson508@gmail.com' ||
+        get(/databases/$(database)/documents/admins/$(request.auth.token.email)).data.role == 'Owner'
+      );
+    }
+
+    function isModerator() {
+      return isSignedIn() && (
+        isSystemOwner() ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.token.email))
+      );
+    }
+
+    function isAdmin() {
+      return isModerator();
+    }
+
+    match /users/{userId} {
+      allow read, write: if isOwner(userId) || isModerator();
+      
+      match /vehicles/{vehicleId} {
+        allow read, write: if isOwner(userId) || isModerator();
+      }
+    }
+
+    match /public_profiles/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isOwner(userId) || isModerator();
+    }
+
+    match /workshops/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isOwner(userId) || isModerator();
+    }
+
+    match /bannedUsers/{userId} {
+      allow read: if isSignedIn();
+      // Only Moderators/Owner can ban/unban, but even Moderator can't ban Owner logic is in App
+      allow write: if isModerator();
+    }
+
+    match /allVehicles/{licensePlate} {
+      allow read: if isSignedIn();
+      allow write: if isModerator() || (isSignedIn() && isNotBanned());
+    }
+
+    match /vehicleHistory/{licensePlate}/logs/{logId} {
+      allow read: if true;
+      allow write: if isModerator() || (isSignedIn() && isNotBanned());
+    }
+
+    match /public_listings/{listingId} {
+      allow read: if true;
+      allow write: if isModerator() || (isSignedIn() && isNotBanned());
+    }
+
+    match /conversations/{conversationId} {
+      allow read, write: if isModerator() || (isSignedIn() && isNotBanned() && request.auth.uid in resource.data.participants);
+      
+      match /messages/{messageId} {
+        allow read, create: if isModerator() || (isSignedIn() && isNotBanned() && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants);
+      }
+    }
+
+    match /admins/{email} {
+      allow read: if isSignedIn();
+      // ONLY owners can manage other administrators
+      allow write: if isSystemOwner();
+    }
+  }
+}
