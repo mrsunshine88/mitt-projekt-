@@ -186,8 +186,8 @@ export function HistoryList({ logs, showPrivateData = false, onEdit, onDelete, o
                   </div>
                 )}
 
-                {/* PRIVAT DATA: Endast ägare/admin kan se kvitto-bilden */}
-                {log.photoUrl && showPrivateData ? (
+                {/* PRIVAT DATA: Endast skaparen eller admin kan se kvitto-bilden (GDPR-skydd) */}
+                {log.photoUrl && (isCreator || isHuvudAdmin) ? (
                   <div className="mt-4">
                     <Dialog>
                       <DialogTrigger asChild>
@@ -210,7 +210,8 @@ export function HistoryList({ logs, showPrivateData = false, onEdit, onDelete, o
                   </div>
                 ) : log.photoUrl ? (
                   <div className="mt-4 inline-flex items-center gap-2 px-3 py-1.5 bg-white/5 rounded-lg border border-white/10 text-[10px] font-bold text-muted-foreground uppercase">
-                    <Lock className="w-3 h-3" /> Verifierat kvitto finns (Dolt för köpare)
+                    <Lock className="w-3 h-3" /> 
+                    {showPrivateData ? 'Kvitto från tidigare ägare (Dolt pga GDPR)' : 'Verifierat kvitto finns (Dolt för köpare)'}
                   </div>
                 ) : null}
 
