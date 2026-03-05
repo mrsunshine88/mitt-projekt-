@@ -11,8 +11,8 @@ export type TrustLevel = 'Gold' | 'Silver' | 'Bronze';
 export interface VehicleLog {
   id: string;
   category: ServiceCategory;
-  date: string; // Utförandedatum (Faktiskt datum)
-  systemDate: any; // Systemdatum (Registreringsdatum - låst)
+  date: string;
+  systemDate: any;
   odometer: number;
   cost?: number;
   notes: string;
@@ -32,7 +32,7 @@ export interface VehicleLog {
 
 export interface Vehicle {
   id: string;
-  ownerId: string | null; // null om herrelös/arkiverad
+  ownerId: string | null;
   ownerName?: string; 
   ownerPhone?: string; 
   ownerEmail?: string;
@@ -49,7 +49,6 @@ export interface Vehicle {
   imageUrls?: string[];
   publicShareId?: string;
   isPublished?: boolean;
-  isVerifiedByAI?: boolean;
   status?: VehicleStatus;
   fuelType?: FuelType;
   gearbox?: GearboxType;
@@ -58,8 +57,8 @@ export interface Vehicle {
   lastInspection?: string;
   createdAt: any;
   updatedAt?: any;
-  trustScore?: number; // 0-100%
-  overallStatus?: TrustLevel;
+  pendingTransferTo?: string | null; // UID för den tänkta köparen
+  pendingTransferFrom?: string | null; // UID för säljaren
 }
 
 export interface UserProfile {

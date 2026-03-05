@@ -125,10 +125,19 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
       
       if (globalSnap.exists()) {
         const existingData = globalSnap.data();
+        // SPÄRR: Om bilen har en annan ownerId som inte är null, och det inte är jag själv.
         if (existingData.ownerId && existingData.ownerId !== user.uid) {
-          setError("Detta fordon är redan registrerat av en annan användare.");
+          setError("Detta fordon är redan registrerat av en annan aktiv användare.");
           setLoading(false);
           return;
+        }
+        
+        // Om bilen fanns men saknar ownerId, då återställer vi den!
+        if (!existingData.ownerId) {
+          toast({ title: "Historik hittad!", description: "Bilens tidigare data har återställts till ditt garage." });
+          // Uppdatera formulär med gammal data om den saknas
+          if (!formData.make) formData.make = existingData.make;
+          if (!formData.model) formData.model = existingData.model;
         }
       }
 
@@ -139,13 +148,12 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
         ownerId: user.uid, 
         ownerEmail: user.email,
         ownerName: user.displayName || 'Bilägare',
-        mainImage: photoPreview, 
+        mainImage: photoPreview || (globalSnap.exists() ? globalSnap.data().mainImage : null), 
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         inspectionFloorOdometer: globalSnap.exists() ? (globalSnap.data().inspectionFloorOdometer || 0) : 0
       });
 
-      // Vi använder reg-nummer som ID för att publicering och uppdatering ska fungera felfritt
       const privateVehicleRef = doc(db, 'artifacts', appId, 'users', user.uid, 'vehicles', plate);
       await setDoc(privateVehicleRef, payload);
       await setDoc(globalRef, payload, { merge: true });

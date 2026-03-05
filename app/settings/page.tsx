@@ -1,8 +1,9 @@
+
 "use client";
 
 import { useState } from 'react';
-import { useUser, useFirestore } from '@/firebase';
-import { doc, writeBatch } from 'firebase/firestore';
+import { useUser, useFirestore, useCollection, useMemoFirebase } from '@/firebase';
+import { doc, writeBatch, collection, getDocs, serverTimestamp } from 'firebase/firestore';
 import { getAuth, deleteUser } from 'firebase/auth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -42,13 +43,39 @@ export default function SettingsPage() {
     setIsDeleting(true);
     try {
       const batch = writeBatch(db);
+      
+      // 1. Frigör alla bilar i det globala registret istället för att radera historiken
+      const vehiclesRef = collection(db, 'artifacts', appId, 'users', user.uid, 'vehicles');
+      const vehiclesSnap = await getDocs(vehiclesRef);
+      
+      vehiclesSnap.forEach(vDoc => {
+        const plate = vDoc.id;
+        // Använd set med merge:true för att nollställa ägaren globalt utan att radera bilens tekniska data
+        const globalRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate);
+        batch.set(globalRef, {
+          ownerId: null,
+          ownerName: null,
+          ownerEmail: null,
+          isPublished: false,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+        
+        // Ta bort annons om den fanns
+        batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'public_listings', plate));
+      });
+
+      // 2. Radera användarprofiler
       batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'public_profiles', user.uid));
       batch.delete(doc(db, 'artifacts', appId, 'users', user.uid, 'profiles', 'user-profile'));
+      
       await batch.commit();
+      
+      // 3. Radera själva auth-kontot
       await deleteUser(auth.currentUser);
       window.location.href = '/';
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Fel vid radering", description: err.message });
+      console.error("Raderingsfel:", err);
+      toast({ variant: "destructive", title: "Fel vid radering", description: "Logga ut och in igen innan du raderar kontot för att verifiera din identitet (säkerhetskrav)." });
       setIsDeleting(false);
     }
   };
@@ -67,7 +94,7 @@ export default function SettingsPage() {
         <Card className="bg-destructive/5 border-destructive/20 border-dashed rounded-[2rem]">
           <CardHeader>
             <CardTitle className="text-destructive flex items-center gap-2"><AlertTriangle className="w-5 h-5" /> Farlig zon</CardTitle>
-            <CardDescription>Radera ditt konto och all din fordonsdata permanent.</CardDescription>
+            <CardDescription>Radera ditt konto. Dina bilar blir "herrelösa" men deras historik sparas på registreringsnumret för framtida ägare.</CardDescription>
           </CardHeader>
           <CardContent>
             <AlertDialog>
@@ -77,7 +104,9 @@ export default function SettingsPage() {
               <AlertDialogContent className="glass-card border-white/10 rounded-[2rem]">
                 <AlertDialogHeader>
                   <AlertDialogTitle>Är du helt säker?</AlertDialogTitle>
-                  <AlertDialogDescription>Detta kan inte ångras. All din historik försvinner.</AlertDialogDescription>
+                  <AlertDialogDescription>
+                    Ditt konto försvinner permanent. Bilarnas historik bevaras dock i det publika registret så att nästa ägare kan ta över dokumentationen.
+                  </AlertDialogDescription>
                 </AlertDialogHeader>
                 <div className="py-4 space-y-2">
                   <Label>Bekräfta genom att skriva RADERA:</Label>

@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
@@ -18,6 +17,7 @@ export function Navbar() {
   const db = useFirestore();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [hasPendingApprovals, setHasPendingApprovals] = useState(false);
+  const [hasPendingTransfers, setHasPendingTransfers] = useState(false);
   const appId = firebaseConfig.projectId;
 
   const profileRef = useMemoFirebase(() => {
@@ -35,28 +35,25 @@ export function Navbar() {
 
   const isWorkshop = profile?.userType === 'Workshop';
 
-  // Lyssna efter väntande godkännanden för ägarens bilar
   useEffect(() => {
-    if (!db || !user || isWorkshop) {
-      setHasPendingApprovals(false);
-      return;
-    }
+    if (!db || !user) return;
 
-    // Vi behöver först veta vilka bilar användaren äger för att veta var vi ska leta efter pending logs
-    // För prestanda i Navbaren letar vi efter logs där ownerId är satt (vi la till detta i WorkshopPage nu)
+    // 1. Lyssna efter väntande verkstadsstämplar
     const pendingQuery = query(
       collection(db, 'artifacts', appId, 'public', 'data', 'pending_approvals'),
       where('ownerId', '==', user.uid)
     );
+    const unsub1 = onSnapshot(pendingQuery, (snap) => setHasPendingApprovals(!snap.empty));
 
-    const unsubscribe = onSnapshot(pendingQuery, (snap) => {
-      setHasPendingApprovals(!snap.empty);
-    }, (err) => {
-      console.warn("Navbar approval check failed:", err);
-    });
+    // 2. Lyssna efter inkommande bilöverlåtelser (Viktigt för köparen!)
+    const transferQuery = query(
+      collection(db, 'artifacts', appId, 'public', 'data', 'cars'),
+      where('pendingTransferTo', '==', user.uid)
+    );
+    const unsub2 = onSnapshot(transferQuery, (snap) => setHasPendingTransfers(!snap.empty));
 
-    return () => unsubscribe();
-  }, [db, user, isWorkshop, appId]);
+    return () => { unsub1(); unsub2(); };
+  }, [db, user, appId]);
 
   const convosQuery = useMemoFirebase(() => {
     if (!db || !user) return null;
@@ -91,7 +88,7 @@ export function Navbar() {
 
           <a href="/dashboard" className="text-sm font-bold text-slate-300 hover:text-white flex items-center gap-2 py-3 md:py-0 transition-colors relative">
             <Car className="w-4 h-4" /> Mina bilar
-            {hasPendingApprovals && (
+            {(hasPendingApprovals || hasPendingTransfers) && (
               <span className="absolute -top-1 -right-1 h-2.5 w-2.5 bg-red-500 rounded-full border-2 border-slate-900 animate-pulse" />
             )}
           </a>
@@ -124,41 +121,23 @@ export function Navbar() {
       <div className="container max-w-6xl mx-auto h-16 flex items-center justify-between px-4">
         <div className="flex items-center gap-8">
           <a href="/" className="font-headline font-bold text-2xl bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-cyan-400">AutoLog</a>
-          
-          <div className="hidden md:flex items-center gap-6">
-            <NavLinks />
-          </div>
+          <div className="hidden md:flex items-center gap-6"><NavLinks /></div>
         </div>
-
         <div className="flex items-center gap-2">
           {user ? (
             <div className="flex items-center gap-2">
-              <a href="/settings" className="p-2.5 hover:bg-white/5 rounded-full text-slate-400 transition-all active:scale-90" title="Inställningar">
-                <Settings className="w-5 h-5" />
-              </a>
-              <button 
-                onClick={handleLogout} 
-                className="flex items-center gap-2 px-5 py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-full text-xs font-bold transition-all active:scale-95"
-              >
-                <LogOut className="w-4 h-4" /> <span className="hidden sm:inline">Logga ut</span>
-              </button>
+              <a href="/settings" className="p-2.5 hover:bg-white/5 rounded-full text-slate-400 transition-all active:scale-90"><Settings className="w-5 h-5" /></a>
+              <button onClick={handleLogout} className="flex items-center gap-2 px-5 py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-full text-xs font-bold transition-all"><LogOut className="w-4 h-4" /> <span className="hidden sm:inline">Logga ut</span></button>
             </div>
           ) : (
             <a href="/login" className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-full text-xs font-bold text-white shadow-xl shadow-blue-600/20 transition-all">Logga in</a>
           )}
-          
           <div className="md:hidden ml-2">
             <Sheet open={isMobileMenuOpen} onOpenChange={setIsMobileMenuOpen}>
-              <SheetTrigger asChild>
-                <button className="p-2 text-slate-400"><Menu className="w-6 h-6" /></button>
-              </SheetTrigger>
+              <SheetTrigger asChild><button className="p-2 text-slate-400"><Menu className="w-6 h-6" /></button></SheetTrigger>
               <SheetContent side="right" className="bg-slate-900 border-white/10 text-white">
-                <SheetHeader className="text-left mb-8">
-                  <SheetTitle className="text-blue-400 font-headline">Meny</SheetTitle>
-                </SheetHeader>
-                <div className="flex flex-col gap-2">
-                  <NavLinks />
-                </div>
+                <SheetHeader className="text-left mb-8"><SheetTitle className="text-blue-400 font-headline">Meny</SheetTitle></SheetHeader>
+                <div className="flex flex-col gap-2"><NavLinks /></div>
               </SheetContent>
             </Sheet>
           </div>
