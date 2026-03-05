@@ -2,7 +2,7 @@
 "use client";
 
 import { use, useState, useMemo, useEffect } from 'react';
-import { ShieldCheck, Gauge, Calendar, ArrowLeft, MessageCircle, Phone, Loader2, History, Shield, FileText, Zap, Palette, Share2, Award, Check, AlertCircle } from 'lucide-react';
+import { ShieldCheck, Gauge, Calendar, ArrowLeft, MessageCircle, Phone, Loader2, History, Shield, FileText, Zap, Palette, Share2, Award, Check, AlertCircle, Maximize2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { HistoryList, calculateOverallTrust, TRUST_CONFIG } from '@/components/history-list';
 import { Badge } from '@/components/ui/badge';
@@ -15,6 +15,13 @@ import { Vehicle, VehicleLog, TrustLevel, UserProfile } from '@/types/autolog';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 export default function PublicVehicleAdView({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -77,7 +84,6 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
     try {
       const convosRef = collection(db, 'artifacts', appId, 'public', 'data', 'conversations');
       
-      // Sök efter befintlig konversation för denna bil mellan dessa två personer
       const q = query(
         convosRef,
         where('carId', '==', plate),
@@ -92,8 +98,6 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
         return;
       }
 
-      // Skapa ny konversation om ingen fanns
-      const transferCode = Math.floor(100000 + Math.random() * 900000).toString();
       const carTitle = `${vehicle.make} ${vehicle.model}`;
       const carImageUrl = vehicle.mainImage || (vehicle.imageUrls && vehicle.imageUrls[0]) || 'https://picsum.photos/seed/car/200/200';
 
@@ -112,11 +116,9 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
         unreadBy: [],
         hiddenFor: [],
         updatedAt: serverTimestamp(),
-        transferCode: transferCode
+        transferCode: Math.floor(100000 + Math.random() * 900000).toString()
       });
 
-      // Vi skickar inget automatiskt meddelande.
-      // Köparen skickas till inkorgen och får skriva själv.
       router.push(`/inbox/${newConvo.id}`);
     } catch (error: any) {
       console.error("Chat error:", error);
@@ -151,22 +153,37 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
         
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
           <div className="lg:col-span-2 space-y-10">
-            {/* Bildspel */}
+            {/* Bildspel med förstoring */}
             <div className="relative rounded-[2.5rem] overflow-hidden glass-card border-none shadow-2xl">
               <Carousel>
                 <CarouselContent>
                   {images.map((url, i) => (
                     <CarouselItem key={i}>
-                      <div className="relative aspect-[16/10]">
-                        <img src={url} alt="" className="w-full h-full object-cover" />
-                        <div className="absolute inset-0 bg-gradient-to-t from-background/80 via-transparent to-transparent" />
-                      </div>
+                      <Dialog>
+                        <DialogTrigger asChild>
+                          <div className="relative aspect-[16/10] cursor-zoom-in group">
+                            <img src={url} alt="" className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                            <div className="absolute inset-0 bg-gradient-to-t from-background/80 via-transparent to-transparent" />
+                            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20">
+                              <Maximize2 className="w-10 h-10 text-white" />
+                            </div>
+                          </div>
+                        </DialogTrigger>
+                        <DialogContent className="max-w-[95vw] max-h-[95vh] p-0 bg-black/90 border-none rounded-none overflow-hidden">
+                          <DialogHeader className="sr-only">
+                            <DialogTitle>Bildförstoring</DialogTitle>
+                          </DialogHeader>
+                          <div className="relative w-full h-full flex items-center justify-center p-4">
+                            <img src={url} alt="Fullskärmsbild" className="max-w-full max-h-[90vh] object-contain" />
+                          </div>
+                        </DialogContent>
+                      </Dialog>
                     </CarouselItem>
                   ))}
                 </CarouselContent>
                 {images.length > 1 && <><CarouselPrevious className="left-6" /><CarouselNext className="right-6" /></>}
               </Carousel>
-              <div className="absolute top-8 left-8 flex flex-col gap-2">
+              <div className="absolute top-8 left-8 flex flex-col gap-2 pointer-events-none">
                 <Badge className="bg-green-500 text-white border-none px-6 py-2.5 text-[10px] font-black uppercase rounded-full shadow-xl">
                   <ShieldCheck className="w-4 h-4 mr-2" /> AutoLog Verifierad
                 </Badge>

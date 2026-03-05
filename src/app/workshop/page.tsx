@@ -1,25 +1,26 @@
-
 "use client";
 
 import { useState, useMemo, useEffect } from 'react';
 import { useUser, useFirestore, useMemoFirebase, useDoc, useCollection } from '@/firebase';
-import { collection, doc, getDoc, getDocs, setDoc, deleteDoc, writeBatch, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, setDoc, deleteDoc, writeBatch, serverTimestamp, query, where, addDoc } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Search, Wrench, ShieldCheck, Loader2, Gauge, Calendar, RefreshCw, Edit3, Trash2, List, ArrowRight } from 'lucide-react';
+import { Search, Wrench, ShieldCheck, Loader2, Gauge, Calendar, RefreshCw, Edit3, Trash2, List, ArrowRight, MessageCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { LogEventDialog } from '@/components/log-event-dialog';
 import { VehicleLog, UserProfile } from '@/types/autolog';
 import { firebaseConfig } from '@/firebase/config';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import Image from 'next/image';
+import { useRouter } from 'next/navigation';
 
 export default function WorkshopPage() {
   const { user, isUserLoading } = useUser();
   const db = useFirestore();
   const { toast } = useToast();
+  const router = useRouter();
   const appId = firebaseConfig.projectId;
   
   const [searchPlate, setSearchPlate] = useState('');
@@ -80,6 +81,53 @@ export default function WorkshopPage() {
     } finally { setLoading(false); }
   };
 
+  const handleContactOwner = async () => {
+    if (!user || !db || !vehicle || !vehicle.ownerId) return;
+    
+    setLoading(true);
+    try {
+      const convosRef = collection(db, 'artifacts', appId, 'public', 'data', 'conversations');
+      
+      const q = query(
+        convosRef,
+        where('carId', '==', vehicle.id),
+        where('participants', 'array-contains', user.uid)
+      );
+      
+      const snap = await getDocs(q);
+      const existing = snap.docs.find(d => d.data().participants.includes(vehicle.ownerId));
+
+      if (existing) {
+        router.push(`/inbox/${existing.id}`);
+        return;
+      }
+
+      const newConvo = await addDoc(convosRef, {
+        participants: [user.uid, vehicle.ownerId],
+        participantNames: {
+          [user.uid]: profile?.name || 'Verkstad',
+          [vehicle.ownerId]: vehicle.ownerName || 'Bilägare'
+        },
+        carId: vehicle.id,
+        carTitle: `${vehicle.make} ${vehicle.model}`,
+        carImageUrl: vehicle.mainImage || 'https://picsum.photos/seed/car/200/200',
+        lastMessage: '',
+        lastMessageAt: serverTimestamp(),
+        lastMessageSenderId: '',
+        unreadBy: [],
+        hiddenFor: [],
+        updatedAt: serverTimestamp(),
+        transferCode: Math.floor(100000 + Math.random() * 900000).toString()
+      });
+
+      router.push(`/inbox/${newConvo.id}`);
+    } catch (error: any) {
+      toast({ variant: "destructive", title: "Kunde inte starta chatt", description: error.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleLogSubmit = async (newLog: Partial<VehicleLog>) => {
     if (!user || !vehicle || !db) return;
     try {
@@ -125,7 +173,6 @@ export default function WorkshopPage() {
           lastServicedAt: serverTimestamp()
         }, { merge: true });
 
-        // Automatisk mätaruppdatering från verkstaden
         if (newLog.odometer && newLog.odometer > vehicle.currentOdometerReading) {
           const vehicleRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate);
           const vehicleUpdates: any = {
@@ -133,7 +180,6 @@ export default function WorkshopPage() {
             updatedAt: serverTimestamp(),
           };
           
-          // Om verkstaden loggar Besiktning, låses golvet direkt
           if (newLog.category === 'Besiktning') {
             vehicleUpdates.inspectionFloorOdometer = newLog.odometer;
           }
@@ -157,7 +203,10 @@ export default function WorkshopPage() {
       fetchServicedCars();
       setIsLogDialogOpen(false);
       setEditingLog(null);
-    } catch (error: any) { toast({ variant: "destructive", title: "Fel", description: error.message }); }
+    } catch (error: any) { 
+      console.error("Fel vid spara:", error);
+      toast({ variant: "destructive", title: "Fel", description: error.message }); 
+    }
   };
 
   const handleDeleteLog = async (log: VehicleLog) => {
@@ -165,16 +214,32 @@ export default function WorkshopPage() {
     
     try {
       const plate = vehicle.licensePlate.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const batch = writeBatch(db);
+      
+      // 1. Radera loggen
       const logRef = doc(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs', log.id);
+      batch.delete(logRef);
       
-      await deleteDoc(logRef);
-      
+      // 2. Radera notisen om den finns
       try {
         const notificationRef = doc(db, 'artifacts', appId, 'public', 'data', 'pending_approvals', `${plate}_${user.uid}`);
-        await deleteDoc(notificationRef);
+        batch.delete(notificationRef);
       } catch (e) {}
 
+      // 3. Kolla om vi ska ta bort från "Mina hanterade fordon"
+      const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs');
+      const qLogs = query(logsRef, where('creatorId', '==', user.uid));
+      const snap = await getDocs(qLogs);
+      
+      // Om detta var den sista loggen (storleken är 1 eftersom vi inte committat deleten än), ta bort från listan
+      if (snap.size <= 1) {
+        const customerRef = doc(db, 'artifacts', appId, 'public', 'data', 'workshops', user.uid, 'servicedCars', plate);
+        batch.delete(customerRef);
+      }
+
+      await batch.commit();
       toast({ title: "Registrering raderad." });
+      fetchServicedCars();
     } catch (e: any) {
       toast({ variant: "destructive", title: "Kunde inte radera", description: e.message });
     }
@@ -249,12 +314,23 @@ export default function WorkshopPage() {
                   </div>
                 </div>
 
-                <Button 
-                  className="w-full h-20 text-2xl font-bold rounded-2xl shadow-2xl shadow-primary/30" 
-                  onClick={() => { setEditingLog(null); setIsLogDialogOpen(true); }}
-                >
-                  <ShieldCheck className="w-8 h-8 mr-3" /> Registrera ny händelse
-                </Button>
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <Button 
+                    className="flex-[2] h-20 text-xl font-bold rounded-2xl shadow-2xl shadow-primary/30" 
+                    onClick={() => { setEditingLog(null); setIsLogDialogOpen(true); }}
+                  >
+                    <ShieldCheck className="w-8 h-8 mr-3" /> Registrera ny händelse
+                  </Button>
+                  {vehicle.ownerId && (
+                    <Button 
+                      variant="outline" 
+                      className="flex-1 h-20 text-lg font-bold rounded-2xl border-white/10"
+                      onClick={handleContactOwner}
+                    >
+                      <MessageCircle className="w-6 h-6 mr-2 text-primary" /> Skriv till ägare
+                    </Button>
+                  )}
+                </div>
 
                 <div className="pt-4">
                   <h3 className="text-lg font-bold mb-6">Senaste historik för fordonet</h3>
@@ -338,7 +414,6 @@ function RealtimeHistoryList({ licensePlate, appId, currentUserId, onEdit, onDel
   return (
     <div className="space-y-4">
       {sortedLogs.map((log: any) => {
-        // En verkstad kan endast ändra loggar de själva skapat.
         const canModify = currentUserId === log.creatorId;
 
         return (

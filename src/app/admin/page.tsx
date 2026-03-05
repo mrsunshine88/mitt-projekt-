@@ -103,31 +103,17 @@ export default function AdminPage() {
       const batch = writeBatch(db);
       const carRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', req.licensePlate);
       const requestRef = doc(db, 'artifacts', appId, 'public', 'data', 'odometer_corrections', req.id);
-      const historyRef = collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', req.licensePlate, 'logs');
 
+      // Uppdatera miltalet tyst i systemet utan att skapa en loggpost i historiken
       batch.update(carRef, {
         currentOdometerReading: req.requestedOdometer,
         inspectionFloorOdometer: req.requestedOdometer,
         updatedAt: serverTimestamp()
       });
 
-      batch.set(doc(historyRef), {
-        vehicleId: req.licensePlate,
-        licensePlate: req.licensePlate,
-        category: 'Besiktning',
-        date: new Date().toISOString().split('T')[0],
-        odometer: req.requestedOdometer,
-        notes: 'Mätarkorrigering godkänd av Admin efter granskning av besiktningsprotokoll.',
-        creatorId: user?.uid,
-        creatorName: 'System Admin',
-        photoUrl: req.proofImageUrl,
-        type: 'Correction',
-        createdAt: serverTimestamp(),
-        approvalStatus: 'approved',
-        verificationSource: 'Official'
-      });
-
+      // Vi tar bort ansökan när den är genomförd
       batch.delete(requestRef);
+      
       await batch.commit();
       toast({ title: "Mätare korrigerad!" });
     } catch (err: any) {

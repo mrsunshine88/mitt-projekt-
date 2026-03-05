@@ -2,14 +2,14 @@
 "use client";
 
 import { use, useState, useMemo, useEffect } from 'react';
-import { ShieldCheck, Gauge, Calendar, ArrowLeft, Loader2, History, FileText, Trash2, Zap, Palette, Wrench, KeyRound, Settings2, XCircle, Award, Share2 } from 'lucide-react';
+import { ShieldCheck, Gauge, Calendar, ArrowLeft, Loader2, History, FileText, Trash2, Zap, Palette, Wrench, KeyRound, Settings2, XCircle, Award, Share2, Check, Maximize2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { HistoryList, calculateOverallTrust, TRUST_CONFIG } from '@/components/history-list';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from '@/components/ui/carousel';
 import { useUser, useFirestore, useCollection, useMemoFirebase, useDoc } from '@/firebase';
-import { doc, collection, updateDoc, deleteDoc, serverTimestamp, writeBatch, onSnapshot } from 'firebase/firestore';
+import { doc, collection, updateDoc, deleteDoc, serverTimestamp, writeBatch, onSnapshot, getDocs, query, where } from 'firebase/firestore';
 import { firebaseConfig } from '@/firebase/config';
 import { Vehicle, VehicleLog, TrustLevel, UserProfile } from '@/types/autolog';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -18,6 +18,7 @@ import { PublishVehicleDialog } from '@/components/publish-vehicle-dialog';
 import { EditVehicleDialog } from '@/components/edit-vehicle-dialog';
 import { LogEventDialog } from '@/components/log-event-dialog';
 import { TransferOwnershipDialog } from '@/components/transfer-ownership-dialog';
+import Link from 'next/link';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,6 +29,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 export default function PrivateVehicleProfile({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -37,7 +45,6 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
   const router = useRouter();
   const { toast } = useToast();
   
-  // Dialog States
   const [isEditAdOpen, setIsEditAdOpen] = useState(false);
   const [isEditInfoOpen, setIsEditInfoOpen] = useState(false);
   const [isLogOpen, setIsLogOpen] = useState(false);
@@ -45,11 +52,11 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
   const [isTransferOpen, setIsTransferOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const appId = firebaseConfig.projectId;
   const plate = id.toUpperCase().replace(/[^A-Z0-9]/g, '');
   
-  // Kontrollera om vi kom hit via Admin-sök
   const isAdminContext = searchParams.get('mode') === 'admin';
 
   const [vehicle, setVehicle] = useState<Vehicle | null>(null);
@@ -92,10 +99,16 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
 
   const trustInfo = TRUST_CONFIG[overallTrust];
   
-  const isHuvudAdmin = user?.email === 'apersson508@gmail.com' || profile?.role === 'Huvudadmin';
   const isOwner = user?.uid === vehicle?.ownerId;
 
-  // Actions
+  const handleCopyLink = () => {
+    const url = `${window.location.origin}/v/${plate}`;
+    navigator.clipboard.writeText(url);
+    setCopied(true);
+    toast({ title: "Publik länk kopierad!" });
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   const handleRemoveAd = async () => {
     if (!user || !db || !vehicle) return;
     try {
@@ -141,30 +154,63 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
       
       const vehicleUpdates: any = { updatedAt: serverTimestamp() };
       
-      // Automatisk mätaruppdatering i profilen
       if (newLog.odometer && newLog.odometer > vehicle.currentOdometerReading) {
         vehicleUpdates.currentOdometerReading = newLog.odometer;
-        
-        // Om det är en Besiktning, låser vi även det nya golvet
         if (newLog.category === 'Besiktning') {
           vehicleUpdates.inspectionFloorOdometer = newLog.odometer;
         }
       }
       
-      const newTrust = calculateOverallTrust([...(rawLogs || []), { ...logData, createdAt: { toDate: () => new Date() } } as any]);
-      vehicleUpdates.overallTrust = newTrust;
-
       batch.update(doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate), vehicleUpdates);
-      
       await batch.commit();
-      toast({ 
-        title: "Historik uppdaterad", 
-        description: newLog.odometer && newLog.odometer > vehicle.currentOdometerReading 
-          ? `Mätaren i profilen har uppdaterats till ${newLog.odometer} mil.` 
-          : undefined 
-      });
+      toast({ title: "Historik uppdaterad" });
       setEditingLog(null);
     } catch (err: any) { toast({ variant: "destructive", title: "Fel", description: err.message }); }
+  };
+
+  const handleApproveLog = async (log: VehicleLog) => {
+    if (!db || !user || !vehicle) return;
+    try {
+      const batch = writeBatch(db);
+      const logRef = doc(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs', log.id);
+      const notificationRef = doc(db, 'artifacts', appId, 'public', 'data', 'pending_approvals', `${plate}_${log.creatorId}`);
+      
+      batch.update(logRef, { 
+        approvalStatus: 'approved', 
+        isVerified: true,
+        updatedAt: serverTimestamp() 
+      });
+      batch.delete(notificationRef);
+      
+      await batch.commit();
+      toast({ title: "Service godkänd!", description: "Historiken är nu verifierad." });
+    } catch (e: any) { toast({ variant: "destructive", title: "Fel", description: e.message }); }
+  };
+
+  const handleRejectLog = async (log: VehicleLog) => {
+    if (!db || !user || !vehicle) return;
+    try {
+      const batch = writeBatch(db);
+      const logRef = doc(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs', log.id);
+      const notificationRef = doc(db, 'artifacts', appId, 'public', 'data', 'pending_approvals', `${plate}_${log.creatorId}`);
+      
+      batch.delete(logRef);
+      batch.delete(notificationRef);
+
+      // Kolla om detta var sista loggen från verkstaden för att rensa deras kundlista
+      const logsQuery = query(
+        collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs'),
+        where('creatorId', '==', log.creatorId)
+      );
+      const snap = await getDocs(logsQuery);
+      if (snap.size <= 1) {
+        const customerRef = doc(db, 'artifacts', appId, 'public', 'data', 'workshops', log.creatorId!, 'servicedCars', plate);
+        batch.delete(customerRef);
+      }
+      
+      await batch.commit();
+      toast({ title: "Förslag nekat", description: "Händelsen har raderats." });
+    } catch (e: any) { toast({ variant: "destructive", title: "Fel", description: e.message }); }
   };
 
   const handleDeleteLog = async (log: VehicleLog) => {
@@ -209,7 +255,7 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
               </Badge>
             )}
             
-            {isHuvudAdmin && isAdminContext && (
+            {isAdminContext && (
               <Badge className="bg-accent text-black px-4 py-1.5 rounded-full uppercase text-[10px] font-black tracking-widest animate-pulse">
                 ADMIN-LÄGE
               </Badge>
@@ -219,22 +265,37 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
         
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
           <div className="lg:col-span-2 space-y-10">
-            {/* Bildspel */}
+            {/* Bildspel med förstoring */}
             <div className="relative rounded-[2.5rem] overflow-hidden glass-card border-none shadow-2xl">
               <Carousel>
                 <CarouselContent>
                   {images.map((url, i) => (
                     <CarouselItem key={i}>
-                      <div className="relative aspect-[16/10]">
-                        <img src={url} alt="" className="w-full h-full object-cover" />
-                        <div className="absolute inset-0 bg-gradient-to-t from-background/80 via-transparent to-transparent" />
-                      </div>
+                      <Dialog>
+                        <DialogTrigger asChild>
+                          <div className="relative aspect-[16/10] cursor-zoom-in group">
+                            <img src={url} alt="" className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                            <div className="absolute inset-0 bg-gradient-to-t from-background/80 via-transparent to-transparent" />
+                            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20">
+                              <Maximize2 className="w-10 h-10 text-white" />
+                            </div>
+                          </div>
+                        </DialogTrigger>
+                        <DialogContent className="max-w-[95vw] max-h-[95vh] p-0 bg-black/90 border-none rounded-none overflow-hidden">
+                          <DialogHeader className="sr-only">
+                            <DialogTitle>Bildförstoring</DialogTitle>
+                          </DialogHeader>
+                          <div className="relative w-full h-full flex items-center justify-center p-4">
+                            <img src={url} alt="Fullskärmsbild" className="max-w-full max-h-[90vh] object-contain" />
+                          </div>
+                        </DialogContent>
+                      </Dialog>
                     </CarouselItem>
                   ))}
                 </CarouselContent>
                 {images.length > 1 && <><CarouselPrevious className="left-6" /><CarouselNext className="right-6" /></>}
               </Carousel>
-              <div className="absolute top-8 left-8 flex flex-col gap-2">
+              <div className="absolute top-8 left-8 flex flex-col gap-2 pointer-events-none">
                 <Badge className={`${trustInfo.bg} ${trustInfo.color} border-none px-6 py-2.5 text-[10px] font-black uppercase rounded-full shadow-xl backdrop-blur-md`}>
                   {trustInfo.emoji} {trustInfo.label}-status
                 </Badge>
@@ -299,6 +360,8 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
                   showPrivateData={true} 
                   onDelete={handleDeleteLog}
                   onEdit={(log: VehicleLog) => { setEditingLog(log); setIsLogOpen(true); }}
+                  onApprove={handleApproveLog}
+                  onReject={handleRejectLog}
                 />
               </div>
             </div>
@@ -319,7 +382,22 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
                 <Button variant="outline" className="w-full h-14 rounded-2xl font-bold" onClick={() => setIsEditInfoOpen(true)}>
                   <Settings2 className="mr-2 w-5 h-5" /> Redigera Info
                 </Button>
+                
                 <div className="h-px bg-white/5 my-2" />
+                
+                <Button variant="outline" className="w-full h-14 rounded-2xl font-bold border-primary/20 text-primary" onClick={handleCopyLink}>
+                  {copied ? <Check className="mr-2 w-5 h-5 text-green-500" /> : <Share2 className="mr-2 w-5 h-5" />} 
+                  Dela historik
+                </Button>
+                
+                <Button variant="outline" className="w-full h-14 rounded-2xl font-bold border-white/10" asChild>
+                  <Link href={`/v/${plate}/history`}>
+                    <History className="mr-2 w-5 h-5" /> Se all historik
+                  </Link>
+                </Button>
+
+                <div className="h-px bg-white/5 my-2" />
+
                 {vehicle.isPublished ? (
                   <>
                     <Button variant="outline" className="w-full h-14 rounded-2xl font-bold border-blue-500/20 text-blue-400" onClick={() => setIsEditAdOpen(true)}><Share2 className="mr-2 w-5 h-5" /> Ändra annons</Button>
@@ -335,11 +413,6 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
                   <Button variant="outline" className="w-full h-14 rounded-2xl font-bold border-orange-500/20 text-orange-500" onClick={handleResetTransfer}><XCircle className="mr-2 w-5 h-5" /> Nollställ överlåtelse</Button>
                 )}
                 <Button variant="ghost" className="w-full h-14 rounded-2xl font-bold text-destructive" onClick={() => setIsDeleteDialogOpen(true)}><Trash2 className="mr-2 w-5 h-5" /> Radera från garage</Button>
-              </div>
-              <div className="pt-4">
-                <Button variant="link" className="w-full text-[10px] text-muted-foreground uppercase font-bold" asChild>
-                  <a href={`/v/${plate}`} target="_blank">Se hur annonsen ser ut <ArrowLeft className="ml-1 w-3 h-3 rotate-180" /></a>
-                </Button>
               </div>
             </Card>
           </div>

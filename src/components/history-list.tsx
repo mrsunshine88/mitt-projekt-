@@ -2,7 +2,7 @@
 "use client";
 
 import { VehicleLog, TrustLevel, UserProfile } from '@/types/autolog';
-import { Wrench, Settings, CircleDashed, Search, FileText, History, ChevronRight, Edit3, Clock, ShieldCheck, Trash2, ArrowLeftRight, CalendarCheck, AlertCircle } from 'lucide-react';
+import { Wrench, Settings, CircleDashed, Search, FileText, History, ChevronRight, Edit3, Clock, ShieldCheck, Trash2, ArrowLeftRight, CalendarCheck, AlertCircle, Maximize2, ImageIcon, Lock, Check, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { differenceInDays, parseISO, isValid, format } from 'date-fns';
@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { useUser, useFirestore, useDoc, useMemoFirebase } from '@/firebase';
 import { doc } from 'firebase/firestore';
 import { firebaseConfig } from '@/firebase/config';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
 const CATEGORY_ICONS: any = {
   'Service': Wrench,
@@ -27,9 +28,6 @@ export const TRUST_CONFIG = {
   'Bronze': { label: 'Brons', emoji: '🥉', color: 'text-orange-600', bg: 'bg-orange-600/10', border: 'border-orange-600/20', description: 'Efterhandsregistrering' }
 };
 
-/**
- * Beräknar tillit för en enskild loggpost baserat på "Dubbla Datum".
- */
 export const calculateTrustLevel = (log: VehicleLog): TrustLevel => {
   try {
     const sysDate = log.createdAt?.toDate ? log.createdAt.toDate() : new Date(log.createdAt);
@@ -40,38 +38,24 @@ export const calculateTrustLevel = (log: VehicleLog): TrustLevel => {
     const diffDays = Math.abs(differenceInDays(sysDate, eventDate));
     const isOfficial = log.verificationSource === 'Workshop' || log.verificationSource === 'Official';
 
-    // GULD: Verkstad/Officiell + Registrerad inom 7 dagar
     if (isOfficial && diffDays <= 7) return 'Gold';
-    
-    // SILVER: AI-verifierad ELLER Manuell registrerad inom 48 timmar (2 dagar)
     if (log.verificationSource === 'AI' || (!isOfficial && diffDays <= 2)) return 'Silver';
-    
-    // BRONS: Allt annat (t.ex. registrering > 30 dagar efter utförande)
     return 'Bronze';
   } catch {
     return 'Bronze';
   }
 };
 
-/**
- * Beräknar bilens totala status baserat på hela historiken enligt v4-krav (Strict Edition).
- */
 export const calculateOverallTrust = (logs: VehicleLog[]): TrustLevel => {
   if (!logs || logs.length === 0) return 'Bronze';
-  
   const approvedLogs = logs.filter(l => l.approvalStatus !== 'pending');
-  
-  // KRAV FÖR ATT ENS KUNNA LÄMNA BRONS: Minst 3 loggade händelser
   if (approvedLogs.length < 3) return 'Bronze';
 
-  // Sortera efter datum (senaste först)
   const sorted = [...approvedLogs].sort((a, b) => b.date.localeCompare(a.date));
-  
   const logLevels = approvedLogs.map(l => calculateTrustLevel(l));
   const goldCount = logLevels.filter(l => l === 'Gold').length;
   const goldRatio = goldCount / approvedLogs.length;
 
-  // Kontrollera de 3 senaste posterna (Måste finnas 3 stycken som är snabba)
   const latest3 = sorted.slice(0, 3);
   const latest3AreQuick = latest3.length === 3 && latest3.every(log => {
     const sysDate = log.createdAt?.toDate ? log.createdAt.toDate() : new Date(log.createdAt);
@@ -80,22 +64,15 @@ export const calculateOverallTrust = (logs: VehicleLog[]): TrustLevel => {
     return diff <= 7;
   });
 
-  // KRAV FÖR GULD: 
-  // 1. Minst 3 händelser totalt
-  // 2. 90% Guld-stämplar i hela historiken
-  // 3. De 3 senaste är snabbt loggade (max 7 dagars diff)
   if (approvedLogs.length >= 3 && goldRatio >= 0.9 && latest3AreQuick) return 'Gold';
   
-  // KRAV FÖR SILVER: 
-  // 1. Minst 3 händelser (justerat från 2 för att höja ribban)
-  // 2. Majoritet Silver/Guld (över 50%)
   const silverOrGoldCount = logLevels.filter(l => l === 'Gold' || l === 'Silver').length;
   if (approvedLogs.length >= 3 && silverOrGoldCount / approvedLogs.length >= 0.5) return 'Silver';
 
   return 'Bronze';
 };
 
-export function HistoryList({ logs, showPrivateData = false, onEdit, onDelete }: any) {
+export function HistoryList({ logs, showPrivateData = false, onEdit, onDelete, onApprove, onReject }: any) {
   const { user } = useUser();
   const db = useFirestore();
   const appId = firebaseConfig.projectId;
@@ -108,9 +85,12 @@ export function HistoryList({ logs, showPrivateData = false, onEdit, onDelete }:
   
   const isHuvudAdmin = user?.email === 'apersson508@gmail.com' || profile?.role === 'Huvudadmin';
 
-  const approvedLogs = (logs || []).filter((l: any) => l.approvalStatus !== 'pending');
+  // Om vi visar privat data (ägaren), visa även väntande loggar. Annars bara godkända.
+  const displayLogs = showPrivateData 
+    ? (logs || [])
+    : (logs || []).filter((l: any) => l.approvalStatus !== 'pending');
 
-  if (!approvedLogs || approvedLogs.length === 0) {
+  if (!displayLogs || displayLogs.length === 0) {
     return (
       <div className="text-center py-20 bg-white/5 rounded-[2rem] border-dashed border-2 border-white/10">
         <p className="text-muted-foreground text-sm">Ingen historik loggad ännu.</p>
@@ -120,7 +100,8 @@ export function HistoryList({ logs, showPrivateData = false, onEdit, onDelete }:
 
   return (
     <div className="space-y-4">
-      {approvedLogs.map((log: VehicleLog) => {
+      {displayLogs.map((log: VehicleLog) => {
+        const isPending = log.approvalStatus === 'pending';
         const trustLevel = calculateTrustLevel(log);
         const trust = TRUST_CONFIG[trustLevel];
         const CategoryIcon = CATEGORY_ICONS[log.category] || Wrench;
@@ -133,22 +114,22 @@ export function HistoryList({ logs, showPrivateData = false, onEdit, onDelete }:
         const isOfficial = log.verificationSource === 'Workshop' || log.verificationSource === 'Official';
         const isOwnershipTransfer = log.category === 'Ägarbyte';
         
-        const canModify = isHuvudAdmin || (isCreator && !isOwnershipTransfer && !isOfficial);
+        const canModify = isHuvudAdmin || (isCreator && !isOwnershipTransfer && !isOfficial && !isPending);
         
         return (
-          <Card key={log.id} className="glass-card border-none overflow-hidden rounded-3xl group transition-all hover:ring-1 ring-white/10">
-            <div className="p-6 flex gap-6">
-              <div className={`w-1.5 rounded-full ${trust.color.replace('text-', 'bg-')}`} />
+          <Card key={log.id} className={`glass-card border-none overflow-hidden rounded-3xl group transition-all ${isPending ? 'ring-2 ring-yellow-500/30 bg-yellow-500/5' : 'hover:ring-1 ring-white/10'}`}>
+            <div className="p-6 flex flex-col sm:flex-row gap-6">
+              <div className={`hidden sm:block w-1.5 rounded-full ${isPending ? 'bg-yellow-500' : trust.color.replace('text-', 'bg-')}`} />
               
               <div className="flex-1 min-w-0">
                 <div className="flex justify-between items-start mb-4">
                   <div className="flex items-center gap-4">
-                    <div className="h-12 w-12 rounded-2xl flex items-center justify-center bg-white/5 text-primary">
+                    <div className={`h-12 w-12 rounded-2xl flex items-center justify-center ${isPending ? 'bg-yellow-500/20 text-yellow-500' : 'bg-white/5 text-primary'}`}>
                       <CategoryIcon className="w-6 h-6" />
                     </div>
                     <div>
                       <h3 className="font-bold text-xl flex items-center gap-2">
-                        {log.category} <span className="text-lg">{trust.emoji}</span>
+                        {log.category} {isPending ? <span className="text-sm font-black text-yellow-500 uppercase ml-2 tracking-widest">Förslag</span> : <span className="text-lg">{trust.emoji}</span>}
                       </h3>
                       <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">
                         Utfördes: {log.date}
@@ -156,9 +137,11 @@ export function HistoryList({ logs, showPrivateData = false, onEdit, onDelete }:
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge className={`${trust.bg} ${trust.color} border-none text-[10px] px-3 py-1 uppercase font-black tracking-widest`}>
-                      {trust.label}
-                    </Badge>
+                    {!isPending && (
+                      <Badge className={`${trust.bg} ${trust.color} border-none text-[10px] px-3 py-1 uppercase font-black tracking-widest`}>
+                        {trust.label}
+                      </Badge>
+                    )}
                     {canModify && (
                       <div className="flex items-center gap-1">
                         {onEdit && <Button variant="ghost" size="icon" onClick={() => onEdit(log)} className="h-8 w-8 hover:bg-white/10"><Edit3 className="w-4 h-4" /></Button>}
@@ -171,13 +154,19 @@ export function HistoryList({ logs, showPrivateData = false, onEdit, onDelete }:
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-4">
                   <div className="bg-white/5 p-3 rounded-2xl border border-white/5">
                     <span className="text-[10px] font-bold opacity-40 uppercase block mb-1">Mätarställning</span>
-                    <span className="text-base font-bold text-primary">{log.odometer?.toLocaleString()} mil</span>
+                    <span className={`text-base font-bold ${isPending ? 'text-yellow-500' : 'text-primary'}`}>{log.odometer?.toLocaleString()} mil</span>
                   </div>
                   <div className="bg-white/5 p-3 rounded-2xl border border-white/5">
-                    <span className="text-[10px] font-bold opacity-40 uppercase block mb-1">Loggades (Systemdatum)</span>
+                    <span className="text-[10px] font-bold opacity-40 uppercase block mb-1">Status</span>
                     <div className="flex items-center gap-1.5">
-                      <CalendarCheck className="w-3.5 h-3.5 opacity-40" />
-                      <span className="text-xs font-medium">{isValid(sysDate) ? format(sysDate, 'yyyy-MM-dd') : '---'}</span>
+                      {isPending ? (
+                        <span className="text-xs font-bold text-yellow-500 uppercase tracking-tighter">Väntar på godkännande</span>
+                      ) : (
+                        <>
+                          <CalendarCheck className="w-3.5 h-3.5 opacity-40" />
+                          <span className="text-xs font-medium">Loggad {isValid(sysDate) ? format(sysDate, 'yyyy-MM-dd') : '---'}</span>
+                        </>
+                      )}
                     </div>
                   </div>
                   {showPrivateData && log.cost ? (
@@ -189,12 +178,62 @@ export function HistoryList({ logs, showPrivateData = false, onEdit, onDelete }:
                 </div>
 
                 {log.notes && (
-                  <p className="text-sm text-muted-foreground leading-relaxed bg-white/5 p-4 rounded-2xl italic border-l-2 border-white/10">
-                    "{log.notes}"
-                  </p>
+                  <div className={`p-4 rounded-2xl border-l-2 mb-4 ${isPending ? 'bg-yellow-500/10 border-yellow-500/20' : 'bg-white/5 border-white/10'}`}>
+                    <p className="text-[10px] font-bold uppercase opacity-40 mb-1">Anteckningar / Verkstad</p>
+                    <p className="text-sm text-muted-foreground leading-relaxed italic">
+                      "{log.notes}"
+                    </p>
+                  </div>
                 )}
 
-                {diffDays > 30 && (
+                {/* PRIVAT DATA: Endast ägare/admin kan se kvitto-bilden */}
+                {log.photoUrl && showPrivateData ? (
+                  <div className="mt-4">
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <div className="relative w-24 h-24 rounded-xl overflow-hidden cursor-zoom-in border border-white/10 group shadow-lg">
+                          <img src={log.photoUrl} alt="Bifogat dokument" className="w-full h-full object-cover transition-transform group-hover:scale-110" />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <Maximize2 className="w-5 h-5 text-white" />
+                          </div>
+                        </div>
+                      </DialogTrigger>
+                      <DialogContent className="max-w-[90vw] max-h-[90vh] p-0 bg-black/95 border-none rounded-none overflow-hidden">
+                        <DialogHeader>
+                          <DialogTitle className="sr-only">Dokumentförstoring</DialogTitle>
+                        </DialogHeader>
+                        <div className="relative w-full h-full flex items-center justify-center p-4">
+                          <img src={log.photoUrl} alt="Dokument i fullskärm" className="max-w-full max-h-[85vh] object-contain shadow-2xl" />
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+                  </div>
+                ) : log.photoUrl ? (
+                  <div className="mt-4 inline-flex items-center gap-2 px-3 py-1.5 bg-white/5 rounded-lg border border-white/10 text-[10px] font-bold text-muted-foreground uppercase">
+                    <Lock className="w-3 h-3" /> Verifierat kvitto finns (Dolt för köpare)
+                  </div>
+                ) : null}
+
+                {/* ÅTGÄRDSKNAPPAR FÖR ÄGARE VID VÄNTANDE SERVICE */}
+                {isPending && showPrivateData && !isCreator && (
+                  <div className="mt-6 flex flex-col sm:flex-row gap-3">
+                    <Button 
+                      onClick={() => onApprove && onApprove(log)}
+                      className="bg-green-600 hover:bg-green-500 text-white font-bold h-12 rounded-xl flex-1 shadow-lg shadow-green-600/20"
+                    >
+                      <Check className="w-5 h-5 mr-2" /> Godkänn & verifiera
+                    </Button>
+                    <Button 
+                      variant="outline"
+                      onClick={() => onReject && onReject(log)}
+                      className="border-destructive/30 text-destructive hover:bg-destructive/10 font-bold h-12 rounded-xl flex-1"
+                    >
+                      <X className="w-5 h-5 mr-2" /> Neka förslag
+                    </Button>
+                  </div>
+                )}
+
+                {!isPending && diffDays > 30 && (
                   <div className="mt-4 flex items-center gap-2 text-[10px] font-bold text-orange-500 uppercase bg-orange-500/5 p-2 rounded-lg border border-orange-500/10">
                     <AlertCircle className="w-3 h-3" />
                     ⚠️ Efterhandsregistrering: Loggad {diffDays} dagar efter utförande
