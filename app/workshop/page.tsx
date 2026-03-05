@@ -125,6 +125,22 @@ export default function WorkshopPage() {
           lastServicedAt: serverTimestamp()
         }, { merge: true });
 
+        // Automatisk mätaruppdatering från verkstaden
+        if (newLog.odometer && newLog.odometer > vehicle.currentOdometerReading) {
+          const vehicleRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate);
+          const vehicleUpdates: any = {
+            currentOdometerReading: newLog.odometer,
+            updatedAt: serverTimestamp(),
+          };
+          
+          // Om verkstaden loggar Besiktning, låses golvet direkt
+          if (newLog.category === 'Besiktning') {
+            vehicleUpdates.inspectionFloorOdometer = newLog.odometer;
+          }
+          
+          batch.update(vehicleRef, vehicleUpdates);
+        }
+
         if (vehicle.ownerId) {
           const notificationRef = doc(db, 'artifacts', appId, 'public', 'data', 'pending_approvals', `${plate}_${user.uid}`);
           batch.set(notificationRef, {
@@ -147,15 +163,12 @@ export default function WorkshopPage() {
   const handleDeleteLog = async (log: VehicleLog) => {
     if (!db || !vehicle || !user || !log.id) return;
     
-    // confirm() blocked by sandbox, we delete directly or use custom UI.
-    // For now we delete directly as requested.
     try {
       const plate = vehicle.licensePlate.toUpperCase().replace(/[^A-Z0-9]/g, '');
       const logRef = doc(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs', log.id);
       
       await deleteDoc(logRef);
       
-      // Attempt to delete notification
       try {
         const notificationRef = doc(db, 'artifacts', appId, 'public', 'data', 'pending_approvals', `${plate}_${user.uid}`);
         await deleteDoc(notificationRef);
@@ -248,6 +261,7 @@ export default function WorkshopPage() {
                   <RealtimeHistoryList 
                     licensePlate={vehicle.licensePlate} 
                     appId={appId} 
+                    currentUserId={user?.uid}
                     onEdit={(log: VehicleLog) => { setEditingLog(log); setIsLogDialogOpen(true); }}
                     onDelete={handleDeleteLog}
                   />
@@ -308,7 +322,7 @@ export default function WorkshopPage() {
   );
 }
 
-function RealtimeHistoryList({ licensePlate, appId, onEdit, onDelete }: any) {
+function RealtimeHistoryList({ licensePlate, appId, currentUserId, onEdit, onDelete }: any) {
   const db = useFirestore();
   const logsQuery = useMemoFirebase(() => {
     if (!db || !licensePlate) return null;
@@ -323,50 +337,57 @@ function RealtimeHistoryList({ licensePlate, appId, onEdit, onDelete }: any) {
   
   return (
     <div className="space-y-4">
-      {sortedLogs.map((log: any) => (
-        <Card key={log.id} className={`glass-card border-none overflow-hidden ${log.approvalStatus === 'pending' ? 'ring-1 ring-yellow-500/20' : ''}`}>
-          <div className="p-4 flex justify-between items-center">
-            <div className="flex gap-4 items-center">
-              <div className="h-10 w-10 rounded-xl bg-white/5 flex items-center justify-center text-primary">
-                <Wrench className="w-5 h-5" />
+      {sortedLogs.map((log: any) => {
+        // En verkstad kan endast ändra loggar de själva skapat.
+        const canModify = currentUserId === log.creatorId;
+
+        return (
+          <Card key={log.id} className={`glass-card border-none overflow-hidden ${log.approvalStatus === 'pending' ? 'ring-1 ring-yellow-500/20' : ''}`}>
+            <div className="p-4 flex justify-between items-center">
+              <div className="flex gap-4 items-center">
+                <div className="h-10 w-10 rounded-xl bg-white/5 flex items-center justify-center text-primary">
+                  <Wrench className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="font-bold text-sm">
+                    {log.category} 
+                    {log.approvalStatus === 'pending' && <span className="text-[10px] text-yellow-500 ml-2 uppercase font-black">Väntar...</span>}
+                  </p>
+                  <p className="text-xs text-muted-foreground">{log.date} • {log.odometer} mil</p>
+                </div>
               </div>
-              <div>
-                <p className="font-bold text-sm">
-                  {log.category} 
-                  {log.approvalStatus === 'pending' && <span className="text-[10px] text-yellow-500 ml-2 uppercase font-black">Väntar...</span>}
-                </p>
-                <p className="text-xs text-muted-foreground">{log.date} • {log.odometer} mil</p>
-              </div>
+              {canModify && (
+                <div className="flex gap-2 relative z-50">
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onEdit(log);
+                    }} 
+                    className="h-10 w-10 rounded-full hover:bg-white/10"
+                  >
+                    <Edit3 className="w-4 h-4 opacity-40 hover:opacity-100" />
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onDelete(log);
+                    }} 
+                    className="h-10 w-10 rounded-full text-destructive hover:bg-destructive/10"
+                  >
+                    <Trash2 className="w-4 h-4 opacity-40 hover:opacity-100" />
+                  </Button>
+                </div>
+              )}
             </div>
-            <div className="flex gap-2 relative z-50">
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onEdit(log);
-                }} 
-                className="h-10 w-10 rounded-full hover:bg-white/10"
-              >
-                <Edit3 className="w-4 h-4 opacity-40 hover:opacity-100" />
-              </Button>
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onDelete(log);
-                }} 
-                className="h-10 w-10 rounded-full text-destructive hover:bg-destructive/10"
-              >
-                <Trash2 className="w-4 h-4 opacity-40 hover:opacity-100" />
-              </Button>
-            </div>
-          </div>
-        </Card>
-      ))}
+          </Card>
+        );
+      })}
       {sortedLogs.length === 0 && <p className="text-center py-10 text-muted-foreground text-sm">Ingen historik registrerad.</p>}
     </div>
   );

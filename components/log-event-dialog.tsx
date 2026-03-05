@@ -8,11 +8,14 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
-import { Camera, Loader2, CheckCircle2, Upload, FileText } from 'lucide-react';
+import { Camera, Loader2, CheckCircle2, Upload, FileText, Lock } from 'lucide-react';
 import { VehicleLog, ServiceCategory } from '@/types/autolog';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { addMonths, format, parseISO } from 'date-fns';
+import { useUser, useFirestore, useDoc, useMemoFirebase } from '@/firebase';
+import { firebaseConfig } from '@/firebase/config';
+import { doc } from 'firebase/firestore';
 
 interface LogEventDialogProps {
   isOpen: boolean;
@@ -59,6 +62,17 @@ export function LogEventDialog({
   const [loading, setLoading] = useState(false);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const { user } = useUser();
+  const db = useFirestore();
+  const appId = firebaseConfig.projectId;
+
+  // Admin Check
+  const profileRef = useMemoFirebase(() => {
+    if (!db || !user?.uid) return null;
+    return doc(db, 'artifacts', appId, 'public', 'data', 'public_profiles', user.uid);
+  }, [db, user?.uid, appId]);
+  const { data: profile } = useDoc<any>(profileRef);
+  const isAdmin = profile?.role === 'Huvudadmin' || profile?.role === 'Moderator' || user?.email === 'apersson508@gmail.com';
   
   const [formData, setFormData] = useState<Partial<VehicleLog>>({
     category: 'Service',
@@ -77,8 +91,8 @@ export function LogEventDialog({
   const isLowering = formData.odometer !== undefined && formData.odometer < currentOdometer;
   const isBelowFloor = formData.odometer !== undefined && formData.odometer < inspectionFloor;
   
-  // Krav: Om man sänker mätaren som ägare måste en bild bifogas
-  const isIllegalOdometer = !isWorkshop && isLowering && (!photoUrl || isBelowFloor);
+  // Ägare kan aldrig gå under golvet. Sänkning kräver bildbevis (förutom för Admin/Verkstad).
+  const isIllegalOdometer = !isAdmin && !isWorkshop && isLowering && (!photoUrl || isBelowFloor);
 
   useEffect(() => {
     if (isOpen) {
@@ -89,7 +103,7 @@ export function LogEventDialog({
         setFormData({
           category: 'Service',
           date: new Date().toISOString().split('T')[0],
-          odometer: currentOdometer,
+          odometer: Math.max(currentOdometer, inspectionFloor),
           cost: 0,
           notes: '',
         });
@@ -97,7 +111,7 @@ export function LogEventDialog({
       }
       setIsCameraActive(false);
     }
-  }, [isOpen, currentOdometer, initialData]);
+  }, [isOpen, currentOdometer, inspectionFloor, initialData]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -115,12 +129,9 @@ export function LogEventDialog({
     try {
       const optimized = await processImage(dataUri);
       setPhotoUrl(optimized);
-      toast({ 
-        title: "Dokument bifogat!", 
-        description: "Fyll i detaljerna nedan manuellt för att spara." 
-      });
+      toast({ title: "Dokument bifogat!" });
     } catch (error) {
-      toast({ variant: "destructive", title: "Fel", description: "Kunde inte hantera bilden." });
+      toast({ variant: "destructive", title: "Fel vid bildbehandling" });
     } finally {
       setLoading(false);
       setIsCameraActive(false);
@@ -133,7 +144,7 @@ export function LogEventDialog({
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
       if (videoRef.current) videoRef.current.srcObject = stream;
     } catch (err) {
-      toast({ variant: "destructive", title: "Kamerafel", description: "Kunde inte starta kameran." });
+      toast({ variant: "destructive", title: "Kamerafel" });
       setIsCameraActive(false);
     }
   };
@@ -145,29 +156,27 @@ export function LogEventDialog({
     canvasRef.current.height = videoRef.current.videoHeight;
     context?.drawImage(videoRef.current, 0, 0);
     const dataUri = canvasRef.current.toDataURL('image/jpeg');
-    
     if (videoRef.current.srcObject) {
       (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
     }
-    
     await handleImageSelection(dataUri);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (isIllegalOdometer) {
-      toast({ 
-        variant: "destructive", 
-        title: "Mätarsäkring aktiv", 
-        description: isBelowFloor 
-          ? `Mätarställningen kan ej sättas lägre än verifierat golv (${inspectionFloor} mil).` 
-          : "Sänkning av mätarställning kräver att du bifogar en bild på ett besiktningsprotokoll." 
-      });
-      return;
+    
+    if (!isAdmin) {
+      if (isBelowFloor) {
+        toast({ variant: "destructive", title: "Besiktningsgolv nått", description: `Mätaren kan aldrig sänkas under det verifierade värdet (${inspectionFloor} mil).` });
+        return;
+      }
+      if (!isWorkshop && isLowering && !photoUrl) {
+        toast({ variant: "destructive", title: "Bildbevis saknas", description: "Du måste bifoga ett besiktningsprotokoll för att sänka mätaren." });
+        return;
+      }
     }
 
     setLoading(true);
-    
     let nextServiceDate = undefined;
     if (formData.category === 'Service' && formData.date) {
       nextServiceDate = format(addMonths(parseISO(formData.date), 12), 'yyyy-MM-dd');
@@ -180,7 +189,7 @@ export function LogEventDialog({
       type: isWorkshop ? 'Proposal' : (isLowering ? 'Correction' : 'Update'),
       approvalStatus: isWorkshop ? 'pending' : 'approved',
       isVerified: !!photoUrl, 
-      verificationSource: isWorkshop ? 'Workshop' : 'User',
+      verificationSource: isWorkshop ? 'Workshop' : (photoUrl ? 'AI' : 'User'),
       performedBy: isWorkshop ? 'Workshop' : 'Owner'
     });
     setLoading(false);
@@ -196,11 +205,19 @@ export function LogEventDialog({
             {photoUrl && <CheckCircle2 className="w-5 h-5 text-green-400" />}
           </DialogTitle>
           <DialogDescription>
-            {isWorkshop 
-              ? 'Fyll i utfört arbete. Ägaren måste godkänna registreringen.' 
-              : 'Ladda upp bildbevis och fyll i detaljerna manuellt.'}
+            {isWorkshop ? 'Fyll i utfört arbete.' : 'Fyll i detaljerna för händelsen.'}
           </DialogDescription>
         </DialogHeader>
+
+        {!isAdmin && isBelowFloor && (
+          <Alert variant="destructive" className="bg-destructive/10 border-destructive/20 mb-4">
+            <Lock className="h-4 w-4" />
+            <AlertTitle>Mätarsäkring aktiv</AlertTitle>
+            <AlertDescription className="text-xs">
+              Mätarställningen kan ej sättas lägre än verifierat golv ({inspectionFloor} mil).
+            </AlertDescription>
+          </Alert>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-6 pt-4">
           <div className="space-y-4">
@@ -247,6 +264,7 @@ export function LogEventDialog({
                   <SelectItem value="Däck">Däck</SelectItem>
                   <SelectItem value="Besiktning">Besiktning</SelectItem>
                   <SelectItem value="Uppgradering">Uppgradering</SelectItem>
+                  <SelectItem value="Ägarbyte">Ägarbyte</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -258,21 +276,21 @@ export function LogEventDialog({
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label className={`text-xs uppercase ${isLowering && !isWorkshop ? 'text-destructive font-bold' : 'opacity-60'}`}>Mätarställning (mil)</Label>
-              <Input type="number" className={`h-12 bg-white/5 rounded-xl ${isLowering && !isWorkshop ? 'border-destructive ring-destructive/20' : 'border-white/10'}`} value={formData.odometer ?? ''} onChange={(e) => setFormData({...formData, odometer: parseInt(e.target.value) || 0})} required />
+              <Label className={`text-xs uppercase ${isLowering && !isAdmin ? 'text-destructive font-bold' : 'opacity-60'}`}>Mätarställning (mil)</Label>
+              <Input type="number" className={`h-12 bg-white/5 rounded-xl ${isLowering && !isAdmin ? 'border-destructive ring-destructive/20' : 'border-white/10'}`} value={formData.odometer ?? ''} onChange={(e) => setFormData({...formData, odometer: parseInt(e.target.value) || 0})} required />
             </div>
             <div className="space-y-2">
               <Label className="text-xs uppercase opacity-60">Kostnad (kr)</Label>
-              <Input type="number" className="h-12 bg-white/5 rounded-xl border-white/10" value={formData.cost || ''} onChange={(e) => setFormData({...formData, cost: parseInt(e.target.value) || 0})} />
+              <Input type="number" className="h-12 bg-white/5 border-white/10 rounded-xl" value={formData.cost || ''} onChange={(e) => setFormData({...formData, cost: parseInt(e.target.value) || 0})} />
             </div>
           </div>
 
           <div className="space-y-2">
-            <Label className="text-xs uppercase opacity-60">Utförda åtgärder / Anteckningar</Label>
+            <Label className="text-xs uppercase opacity-60">Anteckningar</Label>
             <Textarea value={formData.notes} className="bg-white/5 rounded-xl min-h-[100px] border-white/10" onChange={(e) => setFormData({...formData, notes: e.target.value})} placeholder="Beskriv vad som gjorts..." />
           </div>
 
-          <Button type="submit" disabled={loading || isIllegalOdometer} className={`w-full h-14 rounded-2xl font-bold shadow-xl transition-all ${isLowering && !isWorkshop ? 'bg-destructive hover:bg-destructive/90 shadow-destructive/20' : 'shadow-primary/20'}`}>
+          <Button type="submit" disabled={loading || (!isAdmin && isBelowFloor)} className={`w-full h-14 rounded-2xl font-bold shadow-xl transition-all ${isLowering && !isAdmin ? 'bg-destructive hover:bg-destructive/90 shadow-destructive/20' : 'shadow-primary/20'}`}>
             {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : (isWorkshop ? 'Registrera för godkännande' : 'Spara i historiken')}
           </Button>
         </form>

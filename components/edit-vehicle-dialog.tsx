@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useEffect, useRef } from 'react';
@@ -6,9 +7,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, Camera, CheckCircle2, Upload, Trash2, ImagePlus, AlertCircle } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Loader2, Camera, CheckCircle2, Upload, Trash2, ImagePlus, AlertCircle, FileText, Send, Gauge } from 'lucide-react';
 import { useFirestore, useUser } from '@/firebase';
-import { doc, updateDoc, serverTimestamp, collection, addDoc } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { Vehicle } from '@/types/autolog';
 import { SWEDISH_CAR_BRANDS } from '@/constants/car-brands';
@@ -25,7 +27,7 @@ const processImage = (dataUri: string): Promise<string> => {
       let width = img.width;
       let height = img.height;
       if (width > MAX_WIDTH) {
-        height = (MAX_WIDTH / width) * height;
+        height *= MAX_WIDTH / width;
         width = MAX_WIDTH;
       }
       canvas.width = width;
@@ -42,14 +44,16 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
   const [loading, setLoading] = useState(false);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [photoPreview, setPhotoPreview] = useState<string | null>(vehicle.mainImage || null);
-  const [odometerProof, setOdometerProof] = useState<string | null>(null);
+  
+  // Correction States
+  const [correctionProof, setCorrectionProof] = useState<string | null>(null);
   
   const { user } = useUser();
   const db = useFirestore();
   const { toast } = useToast();
   const appId = firebaseConfig.projectId;
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const odometerProofRef = useRef<HTMLInputElement>(null);
+  const correctionProofRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -65,10 +69,9 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
   });
 
   const isLowering = formData.currentOdometerReading < vehicle.currentOdometerReading;
-  const isBelowFloor = formData.currentOdometerReading < (vehicle.inspectionFloorOdometer || 0);
 
   useEffect(() => {
-    if (vehicle) {
+    if (vehicle && isOpen) {
       setFormData({
         make: vehicle.make,
         model: vehicle.model,
@@ -80,9 +83,9 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
         color: vehicle.color || '',
       });
       setPhotoPreview(vehicle.mainImage || null);
-      setOdometerProof(null);
+      setCorrectionProof(null);
     }
-  }, [vehicle]);
+  }, [vehicle, isOpen]);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -95,14 +98,13 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
     reader.readAsDataURL(file);
   };
 
-  const handleOdometerProofUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleCorrectionProofUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = async (event) => {
       const optimized = await processImage(event.target?.result as string);
-      setOdometerProof(optimized);
-      toast({ title: "Mätarbevis bifogat", description: "Sänkning kan nu sparas." });
+      setCorrectionProof(optimized);
     };
     reader.readAsDataURL(file);
   };
@@ -113,7 +115,7 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
       if (videoRef.current) videoRef.current.srcObject = stream;
     } catch (err) {
-      toast({ variant: "destructive", title: "Kamerafel", description: "Kunde inte starta kameran." });
+      toast({ variant: "destructive", title: "Kamerafel" });
       setIsCameraActive(false);
     }
   };
@@ -140,45 +142,49 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
     e.preventDefault();
     if (!user || !db) return;
 
-    if (isLowering && !odometerProof) {
-      toast({ variant: "destructive", title: "Bildbevis krävs", description: "Du måste ladda upp ett besiktningsprotokoll för att sänka mätaren." });
+    // Om miltalet sänks, skicka ansökan istället för att bara uppdatera
+    if (isLowering) {
+      if (!correctionProof) {
+        toast({ variant: "destructive", title: "Bevis krävs", description: "Du måste bifoga ett besiktningsprotokoll för att sänka miltalet." });
+        return;
+      }
+      setLoading(true);
+      try {
+        const plate = vehicle.licensePlate.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        // Vi sparar i det centrala registret för korrigeringar
+        const requestRef = doc(db, 'artifacts', appId, 'public', 'data', 'odometer_corrections', plate);
+        await setDoc(requestRef, {
+          id: plate,
+          licensePlate: plate,
+          ownerId: user.uid,
+          ownerName: user.displayName || 'Ägare',
+          requestedOdometer: formData.currentOdometerReading,
+          currentOdometer: vehicle.currentOdometerReading,
+          proofImageUrl: correctionProof,
+          status: 'pending',
+          createdAt: serverTimestamp(),
+        });
+        toast({ title: "Ansökan skickad!", description: "Huvudadmin kommer nu granska din begäran." });
+        onClose();
+      } catch (err: any) {
+        toast({ variant: "destructive", title: "Fel", description: err.message });
+      } finally {
+        setLoading(false);
+      }
       return;
     }
 
-    if (isBelowFloor) {
-      toast({ variant: "destructive", title: "Besiktningsgolv nått", description: `Mätaren kan ej sättas lägre än verifierat golv (${vehicle.inspectionFloorOdometer} mil).` });
-      return;
-    }
-
+    // Vanlig uppdatering (miltal samma eller högre)
     setLoading(true);
     try {
       const plate = vehicle.licensePlate.toUpperCase().replace(/[^A-Z0-9]/g, '');
-      const vehicleRef = doc(db, 'artifacts', appId, 'users', user.uid, 'vehicles', plate);
       const globalRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate);
-      
       const updates = sanitize({ 
         ...formData, 
         mainImage: photoPreview,
         updatedAt: serverTimestamp() 
       });
-      
-      await updateDoc(vehicleRef, updates);
       await updateDoc(globalRef, updates);
-      
-      if (isLowering) {
-        const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs');
-        await addDoc(logsRef, { 
-          vehicleId: plate, 
-          licensePlate: plate, 
-          creatorId: user.uid, 
-          category: 'Besiktning', 
-          odometer: formData.currentOdometerReading, 
-          type: 'Correction', 
-          notes: 'Mätarkorrigering utförd manuellt med bildbevis.',
-          photoUrl: odometerProof,
-          createdAt: serverTimestamp() 
-        });
-      }
       toast({ title: "Fordon uppdaterat!" });
       onClose();
     } catch (err: any) { 
@@ -194,56 +200,92 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
         <div className="p-6 space-y-6">
           <DialogHeader>
             <DialogTitle className="text-2xl font-headline">Redigera Info</DialogTitle>
-            <DialogDescription>Justera tekniska detaljer och profilbild för din {vehicle.licensePlate}.</DialogDescription>
+            <DialogDescription>Uppdatera din {vehicle.licensePlate}. Sänkning av miltal skickas som ansökan till Huvudadmin.</DialogDescription>
           </DialogHeader>
 
-          {isLowering && !odometerProof && (
-            <Alert variant="destructive" className="bg-destructive/10 border-destructive/20">
-              <Camera className="h-4 w-4" />
-              <AlertTitle>Mätarkorrigering krävs</AlertTitle>
-              <AlertDescription className="text-xs">
-                Ladda upp ett besiktningsprotokoll för att godkänna sänkning av miltalet.
-              </AlertDescription>
-            </Alert>
-          )}
-
-          <div className="space-y-4">
-            <Label className="text-xs font-bold uppercase opacity-60 ml-1">Profilbild</Label>
-            {isCameraActive ? (
-              <div className="relative aspect-video rounded-3xl overflow-hidden bg-black">
-                <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-                <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-3 px-4">
-                  <Button variant="outline" onClick={stopCamera} className="bg-black/40 border-white/20">Avbryt</Button>
-                  <Button onClick={capturePhoto} className="bg-primary shadow-xl">Ta bild</Button>
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="space-y-4">
+              <Label className="text-xs font-bold uppercase opacity-60 ml-1">Profilbild</Label>
+              {isCameraActive ? (
+                <div className="relative aspect-video rounded-3xl overflow-hidden bg-black">
+                  <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+                  <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-3 px-4">
+                    <Button variant="outline" onClick={stopCamera} className="bg-black/40 border-white/20">Avbryt</Button>
+                    <Button type="button" onClick={capturePhoto} className="bg-primary shadow-xl">Ta bild</Button>
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-4">
-                <div className="relative aspect-video rounded-3xl overflow-hidden bg-white/5 border border-white/10 group">
-                  {photoPreview ? (
-                    <>
-                      <img src={photoPreview} alt="Bil" className="w-full h-full object-cover" />
-                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                        <Button variant="destructive" size="sm" onClick={() => setPhotoPreview(null)} className="rounded-full h-10 w-10 p-0"><Trash2 className="w-4 h-4" /></Button>
+              ) : (
+                <div className="flex flex-col gap-4">
+                  <div className="relative aspect-video rounded-3xl overflow-hidden bg-white/5 border border-white/10 group">
+                    {photoPreview ? (
+                      <>
+                        <img src={photoPreview} alt="Bil" className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                          <Button variant="destructive" size="sm" onClick={() => setPhotoPreview(null)} className="rounded-full h-10 w-10 p-0"><Trash2 className="w-4 h-4" /></Button>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground gap-2">
+                        <ImagePlus className="w-10 h-10 opacity-20" />
+                        <p className="text-xs italic">Ingen bild vald</p>
                       </div>
-                    </>
-                  ) : (
-                    <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground gap-2">
-                      <ImagePlus className="w-10 h-10 opacity-20" />
-                      <p className="text-xs italic">Ingen bild vald</p>
-                    </div>
-                  )}
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Button variant="outline" type="button" onClick={startCamera} className="h-12 rounded-xl bg-white/5 border-white/10"><Camera className="w-4 h-4 mr-2" /> Kamera</Button>
+                    <Button variant="outline" type="button" onClick={() => fileInputRef.current?.click()} className="h-12 rounded-xl bg-white/5 border-white/10"><Upload className="w-4 h-4 mr-2" /> Välj fil</Button>
+                    <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
+                  </div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <Button variant="outline" onClick={startCamera} className="h-12 rounded-xl bg-white/5 border-white/10"><Camera className="w-4 h-4 mr-2" /> Kamera</Button>
-                  <Button variant="outline" onClick={() => fileInputRef.current?.click()} className="h-12 rounded-xl bg-white/5 border-white/10"><Upload className="w-4 h-4 mr-2" /> Välj fil</Button>
-                  <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
-                </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
 
-          <form onSubmit={handleSubmit} className="space-y-6 pt-4">
+            <div className="space-y-4 pt-4">
+              <div className="p-4 bg-white/5 rounded-2xl border border-white/10 space-y-4">
+                <div className="flex justify-between items-center">
+                  <Label className={`text-xs font-bold uppercase ${isLowering ? 'text-destructive animate-pulse' : 'opacity-60'}`}>Mätarställning (mil)</Label>
+                  <Badge variant="outline" className="text-[10px] font-mono opacity-40">Nuvarande: {vehicle.currentOdometerReading}</Badge>
+                </div>
+                <div className="relative">
+                  <Gauge className={`absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 ${isLowering ? 'text-destructive' : 'text-primary'}`} />
+                  <Input 
+                    type="number" 
+                    value={formData.currentOdometerReading} 
+                    onChange={(e) => setFormData({...formData, currentOdometerReading: parseInt(e.target.value) || 0})} 
+                    className={`h-14 pl-12 text-xl font-bold bg-background rounded-xl ${isLowering ? 'border-destructive ring-destructive/20' : 'border-white/10'}`} 
+                  />
+                </div>
+
+                {isLowering && (
+                  <div className="bg-destructive/10 border border-destructive/20 rounded-2xl p-4 space-y-4 animate-in fade-in slide-in-from-top-2">
+                    <div className="flex items-center gap-3 text-destructive">
+                      <AlertCircle className="w-5 h-5" />
+                      <p className="text-xs font-bold uppercase tracking-tight">Mätarsänkning kräver bevis</p>
+                    </div>
+                    <p className="text-[10px] text-slate-400">Eftersom du sänker mätaren skickas detta som en ansökan. Bifoga foto på ditt senaste besiktningsprotokoll för verifiering.</p>
+                    
+                    <div 
+                      onClick={() => correctionProofRef.current?.click()}
+                      className={`h-24 border-2 border-dashed rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer transition-all ${correctionProof ? 'border-green-500 bg-green-500/5' : 'border-destructive/40 bg-destructive/5 hover:bg-destructive/10'}`}
+                    >
+                      {correctionProof ? (
+                        <div className="flex flex-col items-center gap-1 text-green-500">
+                          <CheckCircle2 className="w-5 h-5" />
+                          <span className="text-[10px] font-bold uppercase">Dokument bifogat</span>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center gap-1 text-destructive/60">
+                          <Camera className="w-5 h-5" />
+                          <span className="text-[10px] font-bold uppercase">Fota besiktningspapper</span>
+                        </div>
+                      )}
+                    </div>
+                    <input type="file" ref={correctionProofRef} className="hidden" accept="image/*" onChange={handleCorrectionProofUpload} />
+                  </div>
+                )}
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label className="text-xs font-bold uppercase opacity-60">Märke</Label>
@@ -286,28 +328,10 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label className={`text-xs font-bold uppercase ${isLowering ? 'text-destructive' : 'opacity-60'}`}>Mätarställning (mil)</Label>
-              <Input type="number" value={formData.currentOdometerReading} onChange={(e) => setFormData({...formData, currentOdometerReading: parseInt(e.target.value) || 0})} className={`bg-white/5 h-12 rounded-xl ${isLowering ? 'border-destructive ring-destructive/20' : 'border-white/10'}`} />
-            </div>
-
-            {isLowering && (
-              <div 
-                onClick={() => odometerProofRef.current?.click()} 
-                className={`border-2 border-dashed rounded-2xl p-6 flex flex-col items-center gap-2 cursor-pointer transition-all ${odometerProof ? 'bg-green-500/10 border-green-500/30' : 'bg-destructive/5 border-destructive/20'}`}
-              >
-                {odometerProof ? <CheckCircle2 className="text-green-500 w-8 h-8" /> : <Camera className="text-destructive w-8 h-8" />}
-                <span className="text-[10px] font-black uppercase tracking-widest text-center">
-                  {odometerProof ? 'BILD BEKRÄFTAD' : 'LADDA UPP BESIKTNINGSPROTOKOLL FÖR ATT SÄNKA MÄTARE'}
-                </span>
-                <input type="file" ref={odometerProofRef} className="hidden" accept="image/*" onChange={handleOdometerProofUpload} />
-              </div>
-            )}
-
             <DialogFooter className="gap-3 pt-4">
               <Button variant="ghost" type="button" onClick={onClose} className="rounded-xl flex-1">Avbryt</Button>
-              <Button type="submit" disabled={loading || (isLowering && !odometerProof)} className="rounded-xl flex-[2] font-bold text-lg shadow-xl shadow-primary/20">
-                {loading ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : "Spara ändringar"}
+              <Button type="submit" disabled={loading} className={`rounded-xl flex-[2] font-bold text-lg shadow-xl ${isLowering ? 'bg-destructive hover:bg-destructive/90 shadow-destructive/20' : 'shadow-primary/20'}`}>
+                {loading ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : isLowering ? "Skicka ansökan" : "Spara händelse"}
               </Button>
             </DialogFooter>
           </form>

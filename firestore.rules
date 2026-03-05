@@ -37,18 +37,15 @@ service cloud.firestore {
       match /vehicleHistory/{licensePlate}/logs/{logId} {
         allow read: if true;
         allow create: if isSignedIn() && isNotBanned();
-        allow update: if isSignedIn() && isNotBanned() && (
+        allow update, delete: if isSignedIn() && isNotBanned() && (
           request.auth.uid == resource.data.creatorId || 
-          request.auth.uid == resource.data.ownerId ||
           isModerator()
         );
-        // Bilägaren får radera sina egna loggar ELLER neka väntande loggar.
-        // Verkstaden får radera sina egna inskickade loggar (även godkända).
-        allow delete: if isSignedIn() && isNotBanned() && (
-          request.auth.uid == resource.data.creatorId ||
-          (request.auth.uid == resource.data.ownerId && (resource.data.approvalStatus == 'pending' || !exists(resource.data.performedBy) || resource.data.performedBy == 'Owner')) ||
-          isModerator()
-        );
+      }
+      match /odometer_corrections/{plate} {
+        allow read: if isModerator();
+        allow create: if isSignedIn() && isNotBanned();
+        allow update, delete: if isModerator();
       }
       match /pending_approvals/{notificationId} {
         allow read: if isSignedIn();

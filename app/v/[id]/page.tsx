@@ -1,72 +1,55 @@
 
 "use client";
 
-import { use, useState, useEffect, useMemo } from 'react';
-import { ShieldCheck, Gauge, Calendar, ArrowLeft, MessageCircle, Phone, Loader2, History, Shield, FileText, Trash2, Zap, Palette, Edit3 } from 'lucide-react';
+import { use, useState, useMemo, useEffect } from 'react';
+import { ShieldCheck, Gauge, Calendar, ArrowLeft, MessageCircle, Phone, Loader2, History, Shield, FileText, Zap, Palette, Share2, Award, Check, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { HistoryList, calculateOverallTrust, TRUST_CONFIG } from '@/components/history-list';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from '@/components/ui/carousel';
-import { useUser, useFirestore, useCollection, useMemoFirebase } from '@/firebase';
-import { doc, getDoc, collection, setDoc, updateDoc, deleteDoc, serverTimestamp, addDoc } from 'firebase/firestore';
+import { useUser, useFirestore, useCollection, useMemoFirebase, useDoc } from '@/firebase';
+import { doc, collection, onSnapshot, query, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
 import { firebaseConfig } from '@/firebase/config';
-import { Vehicle, VehicleLog, TrustLevel } from '@/types/autolog';
+import { Vehicle, VehicleLog, TrustLevel, UserProfile } from '@/types/autolog';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
-import { PublishVehicleDialog } from '@/components/publish-vehicle-dialog';
-import Link from 'next/link';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
-export default function PublicVehicleView({ params }: { params: Promise<{ id: string }> }) {
+export default function PublicVehicleAdView({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const db = useFirestore();
   const { user } = useUser();
   const router = useRouter();
   const { toast } = useToast();
   
-  const [vehicle, setVehicle] = useState<Vehicle | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isContacting, setIsContacting] = useState(false);
   const [showPhone, setShowPhone] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isEditAdOpen, setIsEditAdOpen] = useState(false);
+  const [isVehicleLoading, setIsVehicleLoading] = useState(true);
+  const [vehicle, setVehicle] = useState<Vehicle | null>(null);
+  const [isCreatingChat, setIsCreatingChat] = useState(false);
 
   const appId = firebaseConfig.projectId;
+  const plate = id.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
   useEffect(() => {
-    async function fetchVehicle() {
-      if (!db || !id) return;
-      try {
-        const plate = id.toUpperCase().replace(/[^A-Z0-9]/g, '');
-        const adRef = doc(db, 'artifacts', appId, 'public', 'data', 'public_listings', plate);
-        const adSnap = await getDoc(adRef);
-        
-        if (adSnap.exists()) {
-          setVehicle({ ...adSnap.data(), id: adSnap.id } as Vehicle);
-        } else {
-          const carRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate);
-          const carSnap = await getDoc(carRef);
-          if (carSnap.exists()) {
-            setVehicle({ ...carSnap.data(), id: carSnap.id } as Vehicle);
-          } else {
-            setError("Fordonet kunde inte hittas.");
-          }
-        }
-      } catch (err) {
-        setError("Ett fel uppstod vid hämtning.");
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    fetchVehicle();
-  }, [db, id, appId]);
+    if (!db) return;
+    const unsub = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate), (snap) => {
+      if (snap.exists()) setVehicle({ ...snap.data(), id: snap.id } as Vehicle);
+      setIsVehicleLoading(false);
+    });
+    return () => unsub();
+  }, [db, plate, appId]);
+
+  const userProfileRef = useMemoFirebase(() => {
+    if (!db || !user?.uid) return null;
+    return doc(db, 'artifacts', appId, 'public', 'data', 'public_profiles', user.uid);
+  }, [db, user?.uid, appId]);
+  const { data: currentUserProfile } = useDoc<UserProfile>(userProfileRef);
 
   const logsRef = useMemoFirebase(() => {
-    if (!db || !vehicle?.licensePlate) return null;
-    const plate = vehicle.licensePlate.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!db) return null;
     return collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs');
-  }, [db, vehicle?.licensePlate, appId]);
-
+  }, [db, plate, appId]);
   const { data: rawLogs } = useCollection<VehicleLog>(logsRef);
 
   const sortedLogs = useMemo(() => {
@@ -80,77 +63,96 @@ export default function PublicVehicleView({ params }: { params: Promise<{ id: st
 
   const trustInfo = TRUST_CONFIG[overallTrust];
 
-  const handleRemoveAd = async () => {
-    if (!user || !db || !vehicle) return;
-    try {
-      const plate = vehicle.licensePlate.toUpperCase().replace(/\s/g, '');
-      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'public_listings', plate));
-      const vRef = doc(db, 'artifacts', appId, 'users', user.uid, 'vehicles', plate);
-      await updateDoc(vRef, { isPublished: false, updatedAt: serverTimestamp() });
-      const gRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate);
-      await updateDoc(gRef, { isPublished: false, updatedAt: serverTimestamp() });
-      
-      toast({ title: "Annons borttagen" });
-      router.push('/dashboard');
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Fel", description: err.message });
-    }
-  };
+  const isOwner = user?.uid === vehicle?.ownerId;
 
   const handleContactSeller = async () => {
-    if (!user || !db) { router.push('/login'); return; }
-    if (!vehicle?.ownerId) return;
-    setIsContacting(true);
-    const plate = vehicle.licensePlate.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    const convoId = `${user.uid}_${vehicle.ownerId}_${plate}`;
-    
-    try {
-      const convoRef = doc(db, 'artifacts', appId, 'public', 'data', 'conversations', convoId);
-      const convoSnap = await getDoc(convoRef);
+    if (!user) {
+      router.push('/login');
+      return;
+    }
 
-      if (!convoSnap.exists()) {
-        await setDoc(convoRef, {
-          id: convoId,
-          participants: [user.uid, vehicle.ownerId],
-          participantNames: { [user.uid]: user.displayName || 'Köpare', [vehicle.ownerId]: vehicle.ownerName || 'Säljare' },
-          carId: plate,
-          carTitle: `${vehicle.make} ${vehicle.model}`,
-          carImageUrl: vehicle.mainImage || 'https://picsum.photos/seed/car/200/200',
-          lastMessage: '',
-          lastMessageAt: serverTimestamp(),
-          lastMessageSenderId: '',
-          unreadBy: [],
-          hiddenFor: [],
-          transferCode: Math.floor(100000 + Math.random() * 900000).toString(),
-          updatedAt: serverTimestamp()
-        });
+    if (!db || !vehicle || !vehicle.ownerId) return;
+
+    setIsCreatingChat(true);
+    try {
+      const convosRef = collection(db, 'artifacts', appId, 'public', 'data', 'conversations');
+      
+      // Sök efter befintlig konversation för denna bil mellan dessa två personer
+      const q = query(
+        convosRef,
+        where('carId', '==', plate),
+        where('participants', 'array-contains', user.uid)
+      );
+      
+      const snap = await getDocs(q);
+      const existing = snap.docs.find(d => d.data().participants.includes(vehicle.ownerId));
+
+      if (existing) {
+        router.push(`/inbox/${existing.id}`);
+        return;
       }
 
-      router.push(`/inbox/${convoId}`);
-    } catch (err) { 
-      console.error(err);
-      toast({ variant: "destructive", title: "Kunde inte starta chatt" }); 
-    } finally { 
-      setIsContacting(false); 
+      // Skapa ny konversation om ingen fanns
+      const transferCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const carTitle = `${vehicle.make} ${vehicle.model}`;
+      const carImageUrl = vehicle.mainImage || (vehicle.imageUrls && vehicle.imageUrls[0]) || 'https://picsum.photos/seed/car/200/200';
+
+      const newConvo = await addDoc(convosRef, {
+        participants: [user.uid, vehicle.ownerId],
+        participantNames: {
+          [user.uid]: currentUserProfile?.name || user.displayName || 'Köpare',
+          [vehicle.ownerId]: vehicle.ownerName || 'Säljare'
+        },
+        carId: plate,
+        carTitle: carTitle,
+        carImageUrl: carImageUrl,
+        lastMessage: '',
+        lastMessageAt: serverTimestamp(),
+        lastMessageSenderId: '',
+        unreadBy: [],
+        hiddenFor: [],
+        updatedAt: serverTimestamp(),
+        transferCode: transferCode
+      });
+
+      // Vi skickar inget automatiskt meddelande.
+      // Köparen skickas till inkorgen och får skriva själv.
+      router.push(`/inbox/${newConvo.id}`);
+    } catch (error: any) {
+      console.error("Chat error:", error);
+      toast({ variant: "destructive", title: "Kunde inte starta chatt", description: error.message });
+    } finally {
+      setIsCreatingChat(false);
     }
   };
 
-  if (isLoading) return <div className="flex flex-col items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
-  if (error) return <div className="container py-20 text-center text-white"><h1 className="text-2xl font-bold">{error}</h1><Button variant="ghost" onClick={() => router.push('/browse')} className="mt-4">Tillbaka</Button></div>;
+  if (isVehicleLoading) return <div className="flex flex-col items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
+  if (!vehicle) return (
+    <div className="container max-w-4xl mx-auto py-20 text-center space-y-6">
+      <h1 className="text-4xl font-headline font-bold">Fordonet hittades inte</h1>
+      <p className="text-muted-foreground">Kontrollera länken eller sök på marknadsplatsen.</p>
+      <Button asChild><a href="/browse">Till marknadsplatsen</a></Button>
+    </div>
+  );
 
   const images = vehicle?.imageUrls && vehicle.imageUrls.length > 0 ? vehicle.imageUrls : [vehicle?.mainImage || "https://picsum.photos/seed/car/800/600"];
-  const isOwner = user?.uid === vehicle?.ownerId;
 
   return (
     <div className="min-h-screen bg-background pb-24">
       <main className="container max-w-6xl mx-auto px-4 py-8">
-        <button onClick={() => router.back()} className="inline-flex items-center text-xs font-bold text-muted-foreground mb-8 hover:text-white uppercase tracking-widest">
-          <ArrowLeft className="w-4 h-4 mr-2" /> TILLBAKA
-        </button>
+        <div className="flex items-center justify-between mb-8">
+          <button onClick={() => router.back()} className="inline-flex items-center text-xs font-bold text-muted-foreground hover:text-white uppercase tracking-widest transition-colors">
+            <ArrowLeft className="w-4 h-4 mr-2" /> TILLBAKA
+          </button>
+          <Badge className="bg-primary/10 text-primary border-primary/20 px-4 py-1 rounded-full uppercase text-[10px] font-black">
+            OFFICIELL BILANNONS
+          </Badge>
+        </div>
         
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
           <div className="lg:col-span-2 space-y-10">
-            <div className="relative rounded-[3rem] overflow-hidden glass-card border-none shadow-2xl">
+            {/* Bildspel */}
+            <div className="relative rounded-[2.5rem] overflow-hidden glass-card border-none shadow-2xl">
               <Carousel>
                 <CarouselContent>
                   {images.map((url, i) => (
@@ -162,106 +164,148 @@ export default function PublicVehicleView({ params }: { params: Promise<{ id: st
                     </CarouselItem>
                   ))}
                 </CarouselContent>
-                {images.length > 1 && (
-                  <><CarouselPrevious className="left-6 bg-black/40 border-none h-12 w-12" /><CarouselNext className="right-6 bg-black/40 border-none h-12 w-12" /></>
-                )}
+                {images.length > 1 && <><CarouselPrevious className="left-6" /><CarouselNext className="right-6" /></>}
               </Carousel>
-              <div className="absolute top-8 left-8">
-                <Badge className="bg-green-500 text-white border-none shadow-2xl px-6 py-2.5 text-[10px] font-black uppercase flex items-center gap-2 rounded-full">
-                  <ShieldCheck className="w-4 h-4" /> AutoLog Verifierad
+              <div className="absolute top-8 left-8 flex flex-col gap-2">
+                <Badge className="bg-green-500 text-white border-none px-6 py-2.5 text-[10px] font-black uppercase rounded-full shadow-xl">
+                  <ShieldCheck className="w-4 h-4 mr-2" /> AutoLog Verifierad
+                </Badge>
+                <Badge className={`${trustInfo.bg} ${trustInfo.color} border-none px-6 py-2.5 text-[10px] font-black uppercase rounded-full shadow-xl backdrop-blur-md`}>
+                  {trustInfo.emoji} CarGuard {trustInfo.label}
                 </Badge>
               </div>
             </div>
             
+            {/* Header & Pris */}
             <div className="space-y-8">
               <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 px-4">
-                <div>
-                  <h1 className="text-5xl md:text-7xl font-headline font-bold text-white tracking-tighter leading-none">
-                    {vehicle?.make} <span className="gradient-text">{vehicle?.model}</span>
+                <div className="space-y-4">
+                  <div className="inline-block bg-primary text-white font-black px-6 py-2 rounded-2xl text-2xl shadow-xl shadow-primary/20 mb-2">
+                    {vehicle.price ? `${vehicle.price.toLocaleString()} kr` : 'Pris ej angivet'}
+                  </div>
+                  <h1 className="text-5xl md:text-7xl font-headline font-bold text-white tracking-tighter">
+                    {vehicle.make} <span className="gradient-text">{vehicle.model}</span>
                   </h1>
                   <div className="flex flex-wrap items-center gap-6 mt-6">
-                    <span className="flex items-center gap-2.5 font-bold text-sm text-slate-300"><Calendar className="w-5 h-5 text-primary" /> {vehicle?.year}</span>
-                    <span className="flex items-center gap-2.5 font-bold text-sm text-slate-300"><Gauge className="w-5 h-5 text-accent" /> {vehicle?.currentOdometerReading?.toLocaleString()} mil</span>
-                    <span className="flex items-center gap-2.5 font-bold text-sm text-slate-300"><Palette className="w-5 h-5 text-pink-400" /> {vehicle?.color || 'Ej angivet'}</span>
+                    <span className="flex items-center gap-2.5 font-bold text-sm text-slate-300"><Calendar className="w-5 h-5 text-primary" /> {vehicle.year}</span>
+                    <span className="flex items-center gap-2.5 font-bold text-sm text-slate-300"><Gauge className="w-5 h-5 text-accent" /> {vehicle.currentOdometerReading?.toLocaleString()} mil</span>
                   </div>
                 </div>
                 <div className="text-right">
-                  {vehicle?.price && <p className="text-5xl md:text-6xl font-headline font-bold text-primary mb-2 tracking-tighter">{vehicle.price.toLocaleString()} kr</p>}
-                  <div className="inline-block bg-white text-black font-bold px-8 py-2.5 rounded-2xl text-3xl border-2 border-slate-300 font-mono shadow-2xl transform -rotate-1">
-                    {vehicle?.licensePlate}
+                  <div className="bg-white text-black font-bold px-8 py-2.5 rounded-2xl text-3xl font-mono shadow-2xl border-2 border-slate-300">
+                    {vehicle.licensePlate}
                   </div>
                 </div>
               </div>
 
-              <Card className={`bg-transparent border-2 ${trustInfo.border} rounded-[2.5rem] overflow-hidden relative shadow-2xl`}>
-                <div className={`absolute inset-0 ${trustInfo.bg} opacity-20 pointer-none`} />
-                <div className="p-8 relative z-10 space-y-6">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className="h-12 w-12 rounded-2xl bg-white/5 flex items-center justify-center text-primary shadow-inner"><Shield className="w-7 h-7" /></div>
-                      <div><h2 className="text-xl font-bold text-white">Bilens Tillitsprofil</h2><p className="text-xs text-muted-foreground">Status baserat på dina regler</p></div>
-                    </div>
-                    <Badge className="bg-black/60 border border-white/10 px-6 py-2.5 rounded-2xl text-sm font-black flex items-center gap-2.5 shadow-xl">
-                      <span className="text-2xl leading-none">{trustInfo.emoji}</span>{trustInfo.label}
-                    </Badge>
-                  </div>
-                  <p className="text-sm text-slate-300 leading-relaxed max-w-2xl">{trustInfo.desc}</p>
+              {/* Tillitsprofil Sektion */}
+              <Card className={`mx-4 p-8 rounded-[2rem] border-2 ${trustInfo.border} ${trustInfo.bg} flex flex-col md:flex-row items-center gap-8 shadow-2xl`}>
+                <div className="text-7xl">{trustInfo.emoji}</div>
+                <div className="text-center md:text-left flex-1 space-y-2">
+                  <h2 className={`text-3xl font-headline font-black uppercase tracking-tight ${trustInfo.color}`}>CarGuard {trustInfo.label}</h2>
+                  <p className="text-slate-300 text-sm leading-relaxed max-w-md">
+                    {trustLevelExplanation(overallTrust)}
+                  </p>
+                </div>
+                <div className="px-6 py-3 bg-black/20 rounded-2xl border border-white/5 text-center">
+                  <p className="text-[10px] font-bold uppercase opacity-50 mb-1">Historikstatus</p>
+                  <p className="font-black text-xl text-white uppercase">{trustInfo.label} ✅</p>
                 </div>
               </Card>
 
+              {/* Tekniska Data */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 px-2">
-                <div className="glass-card p-5 rounded-[2rem] space-y-1"><p className="text-[10px] font-bold uppercase opacity-40">Växellåda</p><p className="font-bold text-white">{vehicle?.gearbox || 'Automat'}</p></div>
-                <div className="glass-card p-5 rounded-[2rem] space-y-1"><p className="text-[10px] font-bold uppercase opacity-40">Bränsle</p><p className="font-bold text-white">{vehicle?.fuelType || 'Bensin'}</p></div>
-                <div className="glass-card p-5 rounded-[2rem] space-y-1"><p className="text-[10px] font-bold uppercase opacity-40">Effekt</p><p className="font-bold text-white">{vehicle?.hp ? `${vehicle.hp} hk` : 'Ej angivet'}</p></div>
-                <div className="glass-card p-5 rounded-[2rem] space-y-1"><p className="text-[10px] font-bold uppercase opacity-40">Senaste insp.</p><p className="font-bold text-white">{vehicle?.lastInspection || 'Ej angivet'}</p></div>
+                <Card className="bg-white/5 border-white/5 p-5 rounded-[2rem]">
+                  <p className="text-[10px] font-bold uppercase opacity-40 mb-1">Växellåda</p>
+                  <p className="font-bold text-white">{vehicle.gearbox || 'Automat'}</p>
+                </Card>
+                <Card className="bg-white/5 border-white/5 p-5 rounded-[2rem]">
+                  <p className="text-[10px] font-bold uppercase opacity-40 mb-1">Bränsle</p>
+                  <p className="font-bold text-white">{vehicle.fuelType || 'Bensin'}</p>
+                </Card>
+                <Card className="bg-white/5 border-white/5 p-5 rounded-[2rem]">
+                  <p className="text-[10px] font-bold uppercase opacity-40 mb-1">Effekt</p>
+                  <p className="font-bold text-white">{vehicle.hp ? `${vehicle.hp} hk` : '---'}</p>
+                </Card>
+                <Card className="bg-white/5 border-white/5 p-5 rounded-[2rem]">
+                  <p className="text-[10px] font-bold uppercase opacity-40 mb-1">Färg</p>
+                  <p className="font-bold text-white">{vehicle.color || '---'}</p>
+                </Card>
               </div>
 
-              {vehicle?.description && (
-                <Card className="glass-card border-white/5 rounded-[2.5rem] shadow-xl overflow-hidden">
-                  <CardContent className="p-10">
-                    <h2 className="text-2xl font-headline font-bold mb-6 flex items-center gap-3 text-white"><FileText className="w-7 h-7 text-primary" /> Säljarens beskrivning</h2>
-                    <p className="text-slate-300 whitespace-pre-wrap leading-relaxed text-lg">{vehicle.description}</p>
-                  </CardContent>
-                </Card>
-              )}
+              {/* Säljarens Beskrivning */}
+              <div className="px-4 py-6 space-y-4">
+                <h3 className="text-2xl font-bold flex items-center gap-2"><FileText className="w-6 h-6 text-primary" /> Säljarens beskrivning</h3>
+                <p className="text-slate-300 text-lg leading-relaxed whitespace-pre-wrap italic">
+                  {vehicle.description || "Säljaren har inte lagt till någon beskrivning än."}
+                </p>
+              </div>
 
+              {/* Historik */}
               <div className="space-y-8 pt-4">
                 <div className="flex items-center justify-between px-4">
-                  <h2 className="text-3xl font-headline font-bold flex items-center gap-4 text-white"><History className="text-primary w-8 h-8" /> Servicehistorik</h2>
-                  <Button asChild variant="outline" className="rounded-full border-white/10 h-10 px-6 font-bold"><Link href={`/v/${vehicle?.licensePlate}/history`}>Visa allt</Link></Button>
+                  <h2 className="text-3xl font-headline font-bold flex items-center gap-4 text-white"><History className="text-primary w-8 h-8" /> Komplett historik</h2>
                 </div>
-                <HistoryList logs={sortedLogs.slice(0, 3)} showPrivateData={false} />
+                <HistoryList 
+                  logs={sortedLogs} 
+                  showPrivateData={false} 
+                />
               </div>
             </div>
           </div>
           
+          {/* Kontaktpanel */}
           <div className="space-y-8">
-            <Card className="glass-card sticky top-24 border-white/5 rounded-[3rem] shadow-2xl overflow-hidden">
-              <CardContent className="p-10 space-y-10">
-                {isOwner ? (
-                  <div className="space-y-4">
-                    <div className="p-4 bg-primary/10 rounded-2xl border border-primary/20 text-center"><p className="text-xs font-black text-primary uppercase tracking-widest">DIN AKTIVA ANNONS</p></div>
-                    <Button className="w-full h-16 rounded-[1.5rem] font-bold text-lg" onClick={() => setIsEditAdOpen(true)}><Edit3 className="mr-3 w-5 h-5" /> Redigera annons</Button>
-                    <Button variant="destructive" className="w-full h-16 rounded-[1.5rem] font-bold text-lg" onClick={handleRemoveAd}><Trash2 className="mr-3 w-5 h-5" /> Ta bort annons</Button>
-                    <Button variant="outline" className="w-full h-16 rounded-[1.5rem] border-white/10 text-slate-300 font-bold" onClick={() => router.push('/dashboard')}>Hantera i garage</Button>
-                  </div>
-                ) : (
-                  <>
-                    <Button className="w-full h-20 rounded-[1.5rem] font-black text-xl shadow-2xl shadow-primary/30 active:scale-95 transition-all" onClick={handleContactSeller} disabled={isContacting}>
-                      {isContacting ? <Loader2 className="animate-spin" /> : <MessageCircle className="mr-3 w-6 h-6" />} Kontakta säljaren
-                    </Button>
-                    <Button variant="outline" className="w-full h-16 rounded-[1.5rem] border-white/10 text-lg font-bold text-slate-300 hover:text-white" onClick={() => setShowPhone(!showPhone)}>
-                      <Phone className="mr-3 w-5 h-5 text-accent" /> {showPhone ? (vehicle?.ownerPhone || "Dolt nummer") : "Visa telefon"}
-                    </Button>
-                  </>
-                )}
-              </CardContent>
+            <Card className="glass-card sticky top-24 border-white/5 rounded-[3rem] p-10 space-y-6 shadow-2xl">
+              <div className="space-y-4">
+                <div className="p-4 bg-primary/5 rounded-2xl border border-primary/10 text-center">
+                  <p className="text-[10px] font-black text-primary uppercase tracking-[0.2em] mb-1">Annonserat pris</p>
+                  <p className="text-4xl font-headline font-black text-white">
+                    {vehicle.price ? `${vehicle.price.toLocaleString()} kr` : 'Ring för pris'}
+                  </p>
+                </div>
+              </div>
+
+              {isOwner ? (
+                <Alert className="bg-blue-500/10 border-blue-500/20 rounded-2xl">
+                  <AlertCircle className="h-4 w-4 text-blue-400" />
+                  <AlertTitle className="text-blue-400">Din egen annons</AlertTitle>
+                  <AlertDescription className="text-xs text-slate-300">
+                    Som ägare kan du inte skicka meddelanden till dig själv. Hantera bilen via din profil istället.
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <div className="space-y-3 pt-4">
+                  <Button 
+                    className="w-full h-20 rounded-[1.5rem] font-black text-xl shadow-xl shadow-primary/20" 
+                    onClick={handleContactSeller}
+                    disabled={isCreatingChat}
+                  >
+                    {isCreatingChat ? <Loader2 className="w-6 h-6 animate-spin" /> : <MessageCircle className="mr-3 w-6 h-6" />} 
+                    Skicka meddelande
+                  </Button>
+                  <Button variant="outline" className="w-full h-16 rounded-[1.5rem] border-white/10 text-lg font-bold" onClick={() => setShowPhone(!showPhone)}>
+                    <Phone className="mr-3 w-5 h-5 text-accent" /> {showPhone ? (vehicle.ownerPhone || "Inget nummer angivet") : "Visa telefonnummer"}
+                  </Button>
+                </div>
+              )}
+
+              <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                <p className="text-[10px] font-bold uppercase opacity-40 text-center mb-2">Säljs av</p>
+                <p className="font-bold text-center text-lg">{vehicle.ownerName || 'Verifierad medlem'}</p>
+              </div>
             </Card>
           </div>
         </div>
       </main>
-
-      {vehicle && <PublishVehicleDialog isOpen={isEditAdOpen} onClose={() => setIsEditAdOpen(false)} vehicle={vehicle} />}
     </div>
   );
+}
+
+function trustLevelExplanation(level: TrustLevel) {
+  switch (level) {
+    case 'Gold': return 'Bilen har en obruten kedja av realtidsloggad verkstadshistorik. De senaste posterna har loggats i direkt anslutning till utförandet.';
+    case 'Silver': return 'Bilen har en god historik där majoriteten av händelserna är verifierade via kvitto eller snabb registrering.';
+    default: return 'Historiken innehåller efterhandsregistreringar eller manuella inmatningar som gjorts långt efter utförandedatumet.';
+  }
 }

@@ -1,3 +1,4 @@
+
 "use client";
 
 import { use, useState, useEffect, useRef, useMemo } from 'react';
@@ -6,7 +7,7 @@ import { doc, collection, serverTimestamp, arrayRemove, arrayUnion } from 'fireb
 import { firebaseConfig } from '@/firebase/config';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Loader2, Send, ArrowLeft, Trash2, ShieldCheck, KeyRound } from 'lucide-react';
+import { Loader2, Send, ArrowLeft, Trash2, ShieldCheck, KeyRound, Lock } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Conversation } from '@/types/autolog';
@@ -34,6 +35,15 @@ export default function ConversationPage({ params }: { params: Promise<{ id: str
 
   const { data: conversation, isLoading: isConvoLoading } = useDoc<Conversation>(convoRef);
 
+  // Hämta bilens data för att veta vem som är säljare (ägare)
+  const carRef = useMemoFirebase(() => {
+    if (!db || !conversation?.carId) return null;
+    return doc(db, 'artifacts', appId, 'public', 'data', 'cars', conversation.carId);
+  }, [db, conversation?.carId, appId]);
+  const { data: car } = useDoc<any>(carRef);
+
+  const isSeller = car?.ownerId === user?.uid;
+
   const messagesRef = useMemoFirebase(() => {
     if (!db) return null;
     return collection(db, 'artifacts', appId, 'public', 'data', 'conversations', id, 'messages');
@@ -51,7 +61,6 @@ export default function ConversationPage({ params }: { params: Promise<{ id: str
   }, [rawMessages]);
 
   useEffect(() => {
-    // SÄKERHETSSPÄRR: Förhindra oändlig loop med statusUpdatedForId
     if (conversation && user && convoRef && statusUpdatedForId.current !== id) {
       const isParticipant = conversation.participants.includes(user.uid);
       if (!isParticipant) return;
@@ -161,17 +170,32 @@ export default function ConversationPage({ params }: { params: Promise<{ id: str
         </div>
       </header>
 
-      <div className="bg-primary/10 py-3 px-4 border-b border-primary/20 flex flex-col items-center justify-center gap-1">
-        <div className="flex items-center gap-2 text-primary">
-          <KeyRound className="w-4 h-4" />
-          <span className="text-[10px] font-bold uppercase tracking-widest">Överlåtelsekod</span>
-        </div>
-        <p className="text-2xl font-mono font-bold text-primary tracking-[0.2em] bg-background/50 px-4 py-1 rounded-lg border border-primary/20">
-          {formattedCode}
-        </p>
-        <p className="text-[10px] text-muted-foreground mt-1 text-center">
-          Ge denna kod till säljaren när du vill slutföra köpet.
-        </p>
+      {/* Överlåtelsekod-sektion: Endast säljaren ser koden */}
+      <div className={`py-4 px-4 border-b flex flex-col items-center justify-center gap-1 transition-colors ${isSeller ? 'bg-primary/10 border-primary/20' : 'bg-white/5 border-white/5'}`}>
+        {isSeller ? (
+          <>
+            <div className="flex items-center gap-2 text-primary">
+              <KeyRound className="w-4 h-4" />
+              <span className="text-[10px] font-bold uppercase tracking-widest">Din Överlåtelsekod</span>
+            </div>
+            <p className="text-2xl font-mono font-bold text-primary tracking-[0.2em] bg-background/50 px-4 py-1 rounded-lg border border-primary/20">
+              {formattedCode}
+            </p>
+            <p className="text-[10px] text-muted-foreground mt-1 text-center font-medium">
+              Ge denna kod till köparen när ni slutför affären.
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-2 text-muted-foreground opacity-60">
+              <Lock className="w-4 h-4" />
+              <span className="text-[10px] font-bold uppercase tracking-widest">Väntar på bekräftelse</span>
+            </div>
+            <p className="text-sm text-center text-muted-foreground mt-1 max-w-[250px] italic">
+              Vänta på att säljaren ger dig överlåtelsekoden när affären slutförs.
+            </p>
+          </>
+        )}
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4">

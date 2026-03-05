@@ -1,4 +1,4 @@
-export type ServiceCategory = 'Service' | 'Reparation' | 'Däck' | 'Besiktning' | 'Uppgradering';
+export type ServiceCategory = 'Service' | 'Reparation' | 'Däck' | 'Besiktning' | 'Uppgradering' | 'Ägarbyte';
 export type FuelType = 'Bensin' | 'Diesel' | 'El' | 'Hybrid';
 export type GearboxType = 'Manuell' | 'Automat';
 export type VehicleStatus = 'private' | 'for-sale' | 'sold';
@@ -57,8 +57,8 @@ export interface Vehicle {
   lastInspection?: string;
   createdAt: any;
   updatedAt?: any;
-  pendingTransferTo?: string | null; // UID för den tänkta köparen
-  pendingTransferFrom?: string | null; // UID för säljaren
+  pendingTransferTo?: string | null; 
+  pendingTransferFrom?: string | null; 
 }
 
 export interface UserProfile {

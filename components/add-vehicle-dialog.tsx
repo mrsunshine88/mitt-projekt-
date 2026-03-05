@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, Camera, ArrowRight, Upload, CheckCircle2, AlertCircle, ShieldAlert } from 'lucide-react';
+import { Loader2, Camera, ArrowRight, Upload, CheckCircle2, AlertCircle, ShieldAlert, Gauge, Lock } from 'lucide-react';
 import { useFirestore, useUser } from '@/firebase';
 import { collection, serverTimestamp, doc, setDoc, getDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
@@ -16,7 +16,7 @@ import { SWEDISH_CAR_BRANDS } from '@/constants/car-brands';
 import { firebaseConfig } from '@/firebase/config';
 import { sanitize } from '@/lib/utils';
 
-type Step = 'info' | 'photo-choice' | 'camera' | 'ready';
+type Step = 'info' | 'confirm-odometer' | 'photo-choice' | 'camera' | 'ready';
 
 const processImage = (dataUri: string): Promise<string> => {
   return new Promise((resolve) => {
@@ -47,6 +47,8 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
   const [error, setError] = useState<string | null>(null);
   const [hasCameraPermission, setHasCameraPermission] = useState(false);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [existingHistoryFound, setExistingHistoryFound] = useState(false);
+  const [isSearchingPlate, setIsSearchingPlate] = useState(false);
   
   const { user } = useUser();
   const db = useFirestore();
@@ -63,6 +65,47 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
     year: new Date().getFullYear(),
     currentOdometerReading: 0,
   });
+
+  const checkExistingVehicle = async (plateInput: string) => {
+    if (!db) return;
+    const normalizedPlate = plateInput.toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
+    if (normalizedPlate.length < 3) return;
+
+    setIsSearchingPlate(true);
+    try {
+      const globalRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', normalizedPlate);
+      const globalSnap = await getDoc(globalRef);
+      
+      if (globalSnap.exists()) {
+        const data = globalSnap.data();
+        setExistingHistoryFound(true);
+        
+        // Hämta låst miltal (golvet)
+        const lockedOdometer = data.inspectionFloorOdometer || data.currentOdometerReading || 0;
+        
+        setFormData(prev => ({
+          ...prev,
+          make: data.make || prev.make,
+          model: data.model || prev.model,
+          year: data.year || prev.year,
+          currentOdometerReading: lockedOdometer
+        }));
+
+        if (data.ownerId && data.ownerId !== user?.uid) {
+          setError("Detta fordon är redan registrerat av en annan aktiv användare.");
+        } else {
+          setError(null);
+        }
+      } else {
+        setExistingHistoryFound(false);
+        setError(null);
+      }
+    } catch (e) {
+      console.error("Fel vid sökning:", e);
+    } finally {
+      setIsSearchingPlate(false);
+    }
+  };
 
   useEffect(() => {
     if (step === 'camera' && !hasCameraPermission) {
@@ -123,22 +166,17 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
       const globalRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate);
       const globalSnap = await getDoc(globalRef);
       
+      let initialFloor = formData.currentOdometerReading;
+
       if (globalSnap.exists()) {
         const existingData = globalSnap.data();
-        // SPÄRR: Om bilen har en annan ownerId som inte är null, och det inte är jag själv.
         if (existingData.ownerId && existingData.ownerId !== user.uid) {
           setError("Detta fordon är redan registrerat av en annan aktiv användare.");
           setLoading(false);
           return;
         }
-        
-        // Om bilen fanns men saknar ownerId, då återställer vi den!
-        if (!existingData.ownerId) {
-          toast({ title: "Historik hittad!", description: "Bilens tidigare data har återställts till ditt garage." });
-          // Uppdatera formulär med gammal data om den saknas
-          if (!formData.make) formData.make = existingData.make;
-          if (!formData.model) formData.model = existingData.model;
-        }
+        // Vi behåller alltid det högsta kända golvet
+        initialFloor = Math.max(initialFloor, existingData.inspectionFloorOdometer || 0);
       }
 
       const payload = sanitize({ 
@@ -151,14 +189,18 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
         mainImage: photoPreview || (globalSnap.exists() ? globalSnap.data().mainImage : null), 
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-        inspectionFloorOdometer: globalSnap.exists() ? (globalSnap.data().inspectionFloorOdometer || 0) : 0
+        inspectionFloorOdometer: initialFloor,
+        currentOdometerReading: initialFloor // Säkerställ att mätaren står på golvet
       });
 
       const privateVehicleRef = doc(db, 'artifacts', appId, 'users', user.uid, 'vehicles', plate);
       await setDoc(privateVehicleRef, payload);
       await setDoc(globalRef, payload, { merge: true });
       
-      toast({ title: "Fordon tillagt!" });
+      toast({ 
+        title: existingHistoryFound ? "Historik återställd!" : "Fordon tillagt!", 
+        description: `Mätarsäkring aktiv vid ${initialFloor} mil.` 
+      });
       onClose(); 
       resetForm();
     } catch (err: any) { 
@@ -173,6 +215,7 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
     setStep('info'); 
     setPhotoPreview(null); 
     setError(null);
+    setExistingHistoryFound(false);
   };
 
   return (
@@ -181,9 +224,11 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
         <div className="p-6">
           <DialogHeader className="mb-4">
             <DialogTitle className="text-2xl font-headline flex items-center gap-2">
-              {step === 'info' ? 'Lägg till fordon' : step === 'ready' ? 'Klart att spara' : 'Ladda upp bild'}
+              {step === 'info' ? 'Lägg till fordon' : step === 'confirm-odometer' ? 'Bekräfta mätare' : step === 'ready' ? 'Klart att spara' : 'Ladda upp bild'}
             </DialogTitle>
-            <DialogDescription>Fyll i uppgifter för din {formData.licensePlate || 'bil'}.</DialogDescription>
+            <DialogDescription>
+              {step === 'confirm-odometer' ? 'Kontrollera att miltalet stämmer. Det går inte att ändra efteråt.' : `Fyll i uppgifter för din ${formData.licensePlate || 'bil'}.`}
+            </DialogDescription>
           </DialogHeader>
 
           {error && (
@@ -193,12 +238,34 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
             </Alert>
           )}
 
+          {existingHistoryFound && step === 'info' && (
+            <Alert className="mb-4 bg-primary/10 border-primary/20 text-primary animate-in zoom-in duration-300">
+              <ShieldAlert className="h-4 w-4" />
+              <AlertTitle className="text-[10px] font-black uppercase tracking-widest">Verifierad historik hittades</AlertTitle>
+              <AlertDescription className="text-[10px]">
+                Bilens miltal har hämtats från det publika registret och kan inte sänkas.
+              </AlertDescription>
+            </Alert>
+          )}
+
           <div className="space-y-6">
             {step === 'info' && (
               <div className="space-y-4">
                 <div className="space-y-2">
                   <Label className="text-xs font-bold uppercase opacity-60 ml-1">Registreringsnummer</Label>
-                  <Input placeholder="ABC 123" className="h-14 text-xl font-bold uppercase bg-white/5 text-center" value={formData.licensePlate} onChange={(e) => setFormData({...formData, licensePlate: e.target.value.toUpperCase()})} />
+                  <div className="relative">
+                    <Input 
+                      placeholder="ABC 123" 
+                      className="h-14 text-xl font-bold uppercase bg-white/5 text-center" 
+                      value={formData.licensePlate} 
+                      onChange={(e) => {
+                        const val = e.target.value.toUpperCase();
+                        setFormData({...formData, licensePlate: val});
+                        checkExistingVehicle(val);
+                      }} 
+                    />
+                    {isSearchingPlate && <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 animate-spin opacity-40" />}
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
@@ -219,13 +286,50 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
                     <Input type="number" className="h-12 bg-white/5" value={formData.year} onChange={(e) => setFormData({...formData, year: parseInt(e.target.value) || 0})} />
                   </div>
                   <div className="space-y-2">
-                    <Label className="text-xs font-bold uppercase opacity-60 ml-1">Mätare (mil)</Label>
-                    <Input type="number" className="h-12 bg-white/5" value={formData.currentOdometerReading || ''} onChange={(e) => setFormData({...formData, currentOdometerReading: parseInt(e.target.value) || 0})} />
+                    <Label className={`text-xs font-bold uppercase ml-1 ${existingHistoryFound ? 'text-primary' : 'opacity-60'}`}>
+                      {existingHistoryFound ? 'Låst mätare (mil)' : 'Mätare (mil)'}
+                    </Label>
+                    <div className="relative">
+                      <Input 
+                        type="number" 
+                        className={`h-12 bg-white/5 ${existingHistoryFound ? 'border-primary/50 text-primary font-black' : ''}`} 
+                        value={formData.currentOdometerReading || ''} 
+                        onChange={(e) => setFormData({...formData, currentOdometerReading: parseInt(e.target.value) || 0})} 
+                        disabled={existingHistoryFound}
+                      />
+                      {existingHistoryFound && <Lock className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 opacity-40" />}
+                    </div>
                   </div>
                 </div>
-                <Button onClick={() => setStep('photo-choice')} className="w-full h-14 rounded-2xl font-bold text-lg mt-4" disabled={!formData.licensePlate || !formData.make}>
+                <Button onClick={() => setStep('confirm-odometer')} className="w-full h-14 rounded-2xl font-bold text-lg mt-4" disabled={!formData.licensePlate || !formData.make || isSearchingPlate || !!error}>
                   Gå vidare <ArrowRight className="ml-2 w-5 h-5" />
                 </Button>
+              </div>
+            )}
+
+            {step === 'confirm-odometer' && (
+              <div className="space-y-8 py-4">
+                <div className="flex flex-col items-center gap-4 text-center">
+                  <div className="h-20 w-20 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                    <Gauge className="w-10 h-10" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground uppercase font-bold tracking-widest">Inskrivet miltal</p>
+                    <p className="text-5xl font-black text-white mt-1">{formData.currentOdometerReading.toLocaleString()} <span className="text-xl">mil</span></p>
+                  </div>
+                </div>
+                <Alert className="bg-primary/5 border-primary/20 rounded-2xl">
+                  <ShieldAlert className="h-4 w-4 text-primary" />
+                  <AlertDescription className="text-xs text-slate-300">
+                    {existingHistoryFound 
+                      ? 'Detta miltal är verifierat från bilens tidigare historik och kan inte sänkas.' 
+                      : 'När du bekräftar detta låses mätarställningen som bilens nya "golv". Du kan aldrig sänka mätaren under detta värde själv.'}
+                  </AlertDescription>
+                </Alert>
+                <div className="flex flex-col gap-3">
+                  <Button onClick={() => setStep('photo-choice')} className="h-16 rounded-2xl font-bold text-xl shadow-xl shadow-primary/20">Ja, det stämmer</Button>
+                  {!existingHistoryFound && <Button variant="ghost" onClick={() => setStep('info')} className="h-12">Nej, ändra värdet</Button>}
+                </div>
               </div>
             )}
 
@@ -242,7 +346,7 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
                     <span className="font-bold">Välj från enhet</span>
                   </Button>
                 </div>
-                <Button variant="ghost" onClick={() => setStep('info')}>Tillbaka</Button>
+                <Button variant="ghost" onClick={() => setStep('confirm-odometer')}>Tillbaka</Button>
               </div>
             )}
 

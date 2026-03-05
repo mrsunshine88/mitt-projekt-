@@ -1,7 +1,8 @@
+
 "use client";
 
 import { useState, useMemo, useEffect } from 'react';
-import { Search, ShieldCheck, Gauge, Calendar, X, SlidersHorizontal, Info, Loader2 } from 'lucide-react';
+import { Search, ShieldCheck, Gauge, Calendar, X, SlidersHorizontal, Info, Loader2, Award } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -14,6 +15,7 @@ import Image from 'next/image';
 import { Vehicle } from '@/types/autolog';
 import { SWEDISH_CAR_BRANDS } from '@/constants/car-brands';
 import { useRouter } from 'next/navigation';
+import { TRUST_CONFIG } from '@/components/history-list';
 
 export default function BrowseMarketplace() {
   const db = useFirestore();
@@ -33,10 +35,8 @@ export default function BrowseMarketplace() {
     }
   }, [user, isUserLoading, router]);
 
-  // Rule 2: Pure collection ref, no complex queries
   const listingsRef = useMemoFirebase(() => {
     if (!db || !user) return null;
-    // Använd 'public_listings' för publika listor
     return collection(db, 'artifacts', appId, 'public', 'data', 'public_listings');
   }, [db, user, appId]);
 
@@ -68,7 +68,7 @@ export default function BrowseMarketplace() {
       <header className="mb-8 space-y-6">
         <div>
           <h1 className="text-4xl font-headline font-bold">Marknadsplats</h1>
-          <p className="text-muted-foreground">Hitta bilar med verifierad och låst historik</p>
+          <p className="text-muted-foreground">Bilar med CarGuard-verifierad historik</p>
         </div>
         <div className="flex flex-col gap-4">
           <div className="flex flex-col md:flex-row gap-4">
@@ -132,39 +132,45 @@ export default function BrowseMarketplace() {
           )}
         </section>
       </div>
-      <footer className="mt-20 py-10 border-t border-white/5 text-center text-xs text-muted-foreground flex items-center justify-center gap-2">
-        <Info className="w-3 h-3" />
-        Totalt i 'public_listings': {listings?.length || 0} bilar
-      </footer>
     </div>
   );
 }
 
 function VehicleListItem({ vehicle }: { vehicle: any }) {
   const displayImage = vehicle.mainImage || vehicle.imageUrl || (vehicle.imageUrls && vehicle.imageUrls[0]) || 'https://picsum.photos/seed/car/600/400';
+  const trust = TRUST_CONFIG[vehicle.overallTrust as keyof typeof TRUST_CONFIG] || TRUST_CONFIG.Bronze;
+
   return (
     <Link href={`/v/${vehicle.id}`}>
-      <Card className="glass-card border-none overflow-hidden group hover:ring-2 transition-all ring-primary/20">
+      <Card className="glass-card border-none overflow-hidden group hover:ring-2 transition-all ring-primary/20 shadow-2xl">
         <div className="aspect-[4/3] relative">
-          <Image src={displayImage} alt={vehicle.make} fill className="object-cover" />
-          <div className="absolute top-4 left-4">
-            <Badge className="bg-green-500 text-white border-none shadow-lg">
+          <Image src={displayImage} alt={vehicle.make} fill className="object-cover transition-transform duration-500 group-hover:scale-105" />
+          <div className="absolute top-4 left-4 flex flex-col gap-2">
+            <Badge className="bg-green-500 text-white border-none shadow-xl px-3 py-1 font-black text-[9px] uppercase">
               <ShieldCheck className="w-3 h-3 mr-1.5" /> Verifierad
+            </Badge>
+            <Badge className={`${trust.bg} ${trust.color} border-none shadow-xl px-3 py-1 font-black text-[9px] uppercase backdrop-blur-md`}>
+              {trust.emoji} {trust.label}
             </Badge>
           </div>
         </div>
         <CardContent className="p-5 space-y-4">
           <div className="flex justify-between items-start">
             <div>
-              <h3 className="text-xl font-headline font-bold">{vehicle.make} {vehicle.model}</h3>
-              <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground">
+              <h3 className="text-xl font-headline font-bold group-hover:text-primary transition-colors">{vehicle.make} {vehicle.model}</h3>
+              <div className="flex items-center gap-3 mt-1 text-[10px] uppercase font-bold text-muted-foreground tracking-widest">
                 <span className="flex items-center gap-1.5"><Calendar className="w-3 h-3" /> {vehicle.year}</span>
                 <span className="flex items-center gap-1.5"><Gauge className="w-3 h-3" /> {vehicle.currentOdometerReading?.toLocaleString()} mil</span>
               </div>
             </div>
-            <p className="text-xl font-headline font-bold text-primary">{vehicle.price?.toLocaleString()} kr</p>
+            <div className="text-right">
+              <p className="text-xl font-headline font-black text-white">{vehicle.price?.toLocaleString()} kr</p>
+            </div>
           </div>
-          <Badge variant="outline" className="bg-white text-black font-bold uppercase">{vehicle.licensePlate}</Badge>
+          <div className="flex justify-between items-center pt-2">
+            <Badge variant="outline" className="bg-white text-black font-bold uppercase border-none px-3 py-1 text-[11px] font-mono shadow-md">{vehicle.licensePlate}</Badge>
+            <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+          </div>
         </CardContent>
       </Card>
     </Link>
