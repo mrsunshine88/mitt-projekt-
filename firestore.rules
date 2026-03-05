@@ -7,7 +7,8 @@ service cloud.firestore {
     }
 
     function isNotBanned() {
-      return !exists(/databases/$(database)/documents/bannedUsers/$(request.auth.uid));
+      let appId = 'studio-3405255876-f647c';
+      return !exists(/databases/$(database)/documents/artifacts/$(appId)/public/data/bannedUsers/$(request.auth.uid));
     }
 
     function isOwner(userId) {
@@ -16,73 +17,79 @@ service cloud.firestore {
 
     function isSystemOwner() {
       return isSignedIn() && (
-        request.auth.token.email == 'apersson508@gmail.com' ||
-        get(/databases/$(database)/documents/admins/$(request.auth.token.email)).data.role == 'Owner'
+        request.auth.token.email == 'apersson508@gmail.com'
       );
     }
 
     function isModerator() {
+      let appId = 'studio-3405255876-f647c';
       return isSignedIn() && (
         isSystemOwner() ||
-        exists(/databases/$(database)/documents/admins/$(request.auth.token.email))
+        get(/databases/$(database)/documents/artifacts/$(appId)/public/data/public_profiles/$(request.auth.uid)).data.role in ['Huvudadmin', 'Moderator']
       );
     }
 
-    function isAdmin() {
-      return isModerator();
+    match /artifacts/{appId}/public/data {
+      match /cars/{licensePlate} {
+        allow read: if true;
+        allow write: if isSignedIn() && isNotBanned();
+      }
+      match /vehicleHistory/{licensePlate}/logs/{logId} {
+        allow read: if true;
+        allow create: if isSignedIn() && isNotBanned();
+        allow update: if isSignedIn() && isNotBanned() && (
+          request.auth.uid == resource.data.creatorId || 
+          request.auth.uid == resource.data.ownerId ||
+          isModerator()
+        );
+        // Bilägaren får radera sina egna loggar ELLER neka väntande loggar.
+        // Verkstaden får radera sina egna inskickade loggar (även godkända).
+        allow delete: if isSignedIn() && isNotBanned() && (
+          request.auth.uid == resource.data.creatorId ||
+          (request.auth.uid == resource.data.ownerId && (resource.data.approvalStatus == 'pending' || !exists(resource.data.performedBy) || resource.data.performedBy == 'Owner')) ||
+          isModerator()
+        );
+      }
+      match /pending_approvals/{notificationId} {
+        allow read: if isSignedIn();
+        allow write, delete: if isSignedIn() && isNotBanned() && (
+          request.auth.uid == resource.data.ownerId || 
+          request.auth.uid == resource.data.workshopId ||
+          isModerator()
+        );
+      }
+      match /public_listings/{listingId} {
+        allow read: if true;
+        allow write, delete: if isSignedIn() && isNotBanned();
+      }
+      match /public_profiles/{userId} {
+        allow read: if true;
+        allow write: if isOwner(userId) || isModerator();
+      }
+      match /bannedUsers/{userId} {
+        allow read: if isSignedIn();
+        allow write: if isModerator();
+      }
+      match /workshops/{workshopId} {
+        allow read: if true;
+        allow write: if isOwner(workshopId) || isModerator();
+        match /servicedCars/{carId} {
+          allow read, write: if isSignedIn() && isNotBanned();
+        }
+      }
+      match /conversations/{conversationId} {
+        allow read, write: if isSignedIn() && isNotBanned() && (request.auth.uid in resource.data.participants || !exists(/databases/$(database)/documents/artifacts/$(appId)/public/data/conversations/$(conversationId)));
+        match /messages/{messageId} {
+          allow read, create: if isSignedIn() && isNotBanned();
+        }
+      }
     }
 
-    match /users/{userId} {
+    match /artifacts/{appId}/users/{userId} {
       allow read, write: if isOwner(userId) || isModerator();
-      
-      match /vehicles/{vehicleId} {
+      match /{allPaths=**} {
         allow read, write: if isOwner(userId) || isModerator();
       }
-    }
-
-    match /public_profiles/{userId} {
-      allow read: if isSignedIn();
-      allow write: if isOwner(userId) || isModerator();
-    }
-
-    match /workshops/{userId} {
-      allow read: if isSignedIn();
-      allow write: if isOwner(userId) || isModerator();
-    }
-
-    match /bannedUsers/{userId} {
-      allow read: if isSignedIn();
-      // Only Moderators/Owner can ban/unban, but even Moderator can't ban Owner logic is in App
-      allow write: if isModerator();
-    }
-
-    match /allVehicles/{licensePlate} {
-      allow read: if isSignedIn();
-      allow write: if isModerator() || (isSignedIn() && isNotBanned());
-    }
-
-    match /vehicleHistory/{licensePlate}/logs/{logId} {
-      allow read: if true;
-      allow write: if isModerator() || (isSignedIn() && isNotBanned());
-    }
-
-    match /public_listings/{listingId} {
-      allow read: if true;
-      allow write: if isModerator() || (isSignedIn() && isNotBanned());
-    }
-
-    match /conversations/{conversationId} {
-      allow read, write: if isModerator() || (isSignedIn() && isNotBanned() && request.auth.uid in resource.data.participants);
-      
-      match /messages/{messageId} {
-        allow read, create: if isModerator() || (isSignedIn() && isNotBanned() && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants);
-      }
-    }
-
-    match /admins/{email} {
-      allow read: if isSignedIn();
-      // ONLY owners can manage other administrators
-      allow write: if isSystemOwner();
     }
   }
 }

@@ -1,15 +1,16 @@
-# AutoLog - Digital Servicebok med AI
+# AutoLog - Digital Servicebok med Verifierad Historik
 
 Välkommen till AutoLog, en modern lösning för att digitalisera och verifiera fordonshistorik.
 
 ## Funktioner
-- **AI-Scanning**: Gemini Vision läser av besiktningsprotokoll och kvitton automatiskt.
-- **Mätarsäkring**: Ett "besiktningsgolv" förhindrar mätarfusk.
+- **Digitala Bildbevis**: Ladda upp och spara bilder på besiktningsprotokoll och kvitton för en transparent historik.
+- **Mätarsäkring**: Ett "besiktningsgolv" förhindrar mätarfusk genom krav på dokumentation vid sänkning.
 - **Digitalt Certifikat**: Skapa en publik länk för att visa upp bilens verifierade historik vid försäljning.
-- **Workshop Portal**: Verkstäder kan sätta digitala stämplar direkt i systemet.
+- **Workshop Portal**: Verkstäder kan sätta digitala stämplar och skicka serviceförslag direkt till ägaren.
+- **Säkra Ägarbyten**: Överför hela bilens digitala historik till en ny ägare med hjälp av säkra överlåtelsekoder.
 
 ## Driftsättning (Live)
-Detta är en Next.js-applikation med Server Components och GenAI. Den kan inte köras som en statisk sida på GitHub Pages.
+Detta är en Next.js-applikation med Server Components och Firebase.
 
 ### Rekommenderad metod: Firebase App Hosting
 1. Ladda ner projektet som en ZIP från Firebase Studio.
