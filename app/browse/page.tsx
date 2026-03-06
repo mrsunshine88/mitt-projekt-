@@ -36,16 +36,10 @@ export default function BrowseMarketplace() {
   
   const [showFilters, setShowFilters] = useState(false);
 
-  useEffect(() => {
-    if (!isUserLoading && !user) {
-      router.push('/');
-    }
-  }, [user, isUserLoading, router]);
-
   const listingsRef = useMemoFirebase(() => {
-    if (!db || !user) return null;
+    if (!db) return null;
     return collection(db, 'artifacts', appId, 'public', 'data', 'public_listings');
-  }, [db, user, appId]);
+  }, [db, appId]);
 
   const { data: listings, isLoading } = useCollection<Vehicle>(listingsRef);
 
@@ -57,7 +51,10 @@ export default function BrowseMarketplace() {
       const matchesBrand = brandFilter === 'all' || v.make === brandFilter;
       const matchesFuel = fuelFilter === 'all' || v.fuelType === fuelFilter;
       const matchesGearbox = gearboxFilter === 'all' || v.gearbox === gearboxFilter;
-      const matchesTrust = trustFilter === 'all' || v.overallTrust === trustFilter;
+      
+      // Strikt filterlogik baserat på lagrat betyg
+      const currentTrust = v.overallTrust || 'Bronze';
+      const matchesTrust = trustFilter === 'all' || currentTrust === trustFilter;
       
       const matchesPrice = !maxPrice || (v.price && v.price <= parseInt(maxPrice));
       const matchesMileage = !maxMileage || (v.currentOdometerReading && v.currentOdometerReading <= parseInt(maxMileage));
@@ -71,11 +68,9 @@ export default function BrowseMarketplace() {
   const myAds = useMemo(() => filteredVehicles.filter(v => v.ownerId === user?.uid), [filteredVehicles, user]);
   const otherAds = useMemo(() => filteredVehicles.filter(v => v.ownerId !== user?.uid), [filteredVehicles, user]);
 
-  if (isUserLoading || (user && isLoading)) {
+  if (isUserLoading || isLoading) {
     return <div className="flex items-center justify-center min-h-[60vh]"><Loader2 className="w-8 h-8 animate-spin text-primary opacity-20" /></div>;
   }
-
-  if (!user) return null;
 
   return (
     <div className="container max-w-6xl mx-auto px-4 py-8">
@@ -110,7 +105,7 @@ export default function BrowseMarketplace() {
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold uppercase opacity-60 ml-1">Tillit Status</label>
+                  <label className="text-[10px] font-bold uppercase opacity-60 ml-1">CarGuard Status</label>
                   <Select value={trustFilter} onValueChange={setTrustFilter}>
                     <SelectTrigger className="bg-white/5 border-white/10 h-12 rounded-xl"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -182,7 +177,7 @@ export default function BrowseMarketplace() {
       </header>
 
       <div className="space-y-12">
-        {myAds.length > 0 && (
+        {user && myAds.length > 0 && (
           <section className="space-y-6">
             <div className="flex items-center gap-2">
               <div className="h-2 w-2 bg-primary rounded-full animate-pulse" />
@@ -194,7 +189,7 @@ export default function BrowseMarketplace() {
           </section>
         )}
         <section className="space-y-6">
-          <h2 className="text-xl font-headline font-bold uppercase tracking-wider">{myAds.length > 0 ? 'Fler bilar till salu' : 'Bilar till salu'}</h2>
+          <h2 className="text-xl font-headline font-bold uppercase tracking-wider">{(user && myAds.length > 0) ? 'Fler bilar till salu' : 'Bilar till salu'}</h2>
           {otherAds.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {otherAds.map((v) => <VehicleListItem key={v.id} vehicle={v} />)}

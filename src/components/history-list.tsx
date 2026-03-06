@@ -31,47 +31,63 @@ export const TRUST_CONFIG = {
   'Bronze': { label: 'Brons', emoji: '🥉', color: 'text-orange-600', bg: 'bg-orange-600/10', border: 'border-orange-600/20', description: 'Efterhandsregistrering' }
 };
 
+/**
+ * CarGuard Tillförlitlighetslogik (Version 4)
+ * Definition av Tidsgap: Systemdatum - Utförandedatum
+ */
 export const calculateTrustLevel = (log: VehicleLog): TrustLevel => {
   try {
-    const sysDate = log.createdAt?.toDate ? log.createdAt.toDate() : new Date(log.createdAt);
+    const sysDate = log.createdAt?.toDate ? log.createdAt.toDate() : (log.createdAt ? new Date(log.createdAt) : new Date());
     const eventDate = parseISO(log.date);
     
     if (!isValid(sysDate) || !isValid(eventDate)) return 'Bronze';
     
     const diffDays = Math.abs(differenceInDays(sysDate, eventDate));
-    const isOfficial = log.verificationSource === 'Workshop' || log.verificationSource === 'Official';
 
-    if (isOfficial && diffDays <= 7) return 'Gold';
-    if (log.verificationSource === 'AI' || (!isOfficial && diffDays <= 2)) return 'Silver';
+    // Guld-zon: 0–7 dagar (Realtid)
+    if (diffDays <= 7) return 'Gold';
+    // Silver-zon: 8–90 dagar (Godkänd efterhandsregistrering)
+    if (diffDays <= 90) return 'Silver';
+    // Brons-zon: > 90 dagar (Osäker historik)
     return 'Bronze';
   } catch {
     return 'Bronze';
   }
 };
 
+/**
+ * Beräknar bilens totala status baserat på specifikation V4 (STRIKT VERSION)
+ */
 export const calculateOverallTrust = (logs: VehicleLog[]): TrustLevel => {
   if (!logs || logs.length === 0) return 'Bronze';
-  const approvedLogs = logs.filter(l => l.approvalStatus !== 'pending');
-  if (approvedLogs.length < 3) return 'Bronze';
-
-  const sorted = [...approvedLogs].sort((a, b) => b.date.localeCompare(a.date));
-  const logLevels = approvedLogs.map(l => calculateTrustLevel(l));
-  const goldCount = logLevels.filter(l => l === 'Gold').length;
-  const goldRatio = goldCount / approvedLogs.length;
-
-  const latest3 = sorted.slice(0, 3);
-  const latest3AreQuick = latest3.length === 3 && latest3.every(log => {
-    const sysDate = log.createdAt?.toDate ? log.createdAt.toDate() : new Date(log.createdAt);
-    const eventDate = parseISO(log.date);
-    const diff = Math.abs(differenceInDays(sysDate, eventDate));
-    return diff <= 7;
-  });
-
-  if (approvedLogs.length >= 3 && goldRatio >= 0.9 && latest3AreQuick) return 'Gold';
   
-  const silverOrGoldCount = logLevels.filter(l => l === 'Gold' || l === 'Silver').length;
-  if (approvedLogs.length >= 3 && silverOrGoldCount / approvedLogs.length >= 0.5) return 'Silver';
+  // Endast godkända poster räknas (viktigt för verkstadsförslag som inte godkänts än)
+  const approvedLogs = logs
+    .filter(l => l.approvalStatus === 'approved' || l.approvalStatus === undefined)
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
+  if (approvedLogs.length === 0) return 'Bronze';
+
+  const logLevels = approvedLogs.map(l => calculateTrustLevel(l));
+
+  // 1. GULD-KRAV: Alla av de 3 senaste serviceposterna måste ligga i Guld-zonen (0–7 dagar).
+  if (approvedLogs.length >= 3) {
+    const latestThree = logLevels.slice(0, 3);
+    const allGold = latestThree.every(level => level === 'Gold');
+    if (allGold) return 'Gold';
+  }
+
+  // 2. SILVER-KRAV: 
+  // Krav 1: Minst 2 totala poster.
+  // Krav 2: (Antal_Guld + Antal_Silver) / Totalt_antal_poster > 0.5 (Majoritetskrav).
+  if (approvedLogs.length >= 2) {
+    const goodLogsCount = logLevels.filter(level => level === 'Gold' || level === 'Silver').length;
+    const ratio = goodLogsCount / approvedLogs.length;
+    // Strikt MAJORITET enligt spec V4 (> 0.5)
+    if (ratio > 0.5) return 'Silver';
+  }
+
+  // 3. BRONS: Default.
   return 'Bronze';
 };
 
@@ -192,9 +208,8 @@ export function HistoryList({ logs, showPrivateData = false, onEdit, onDelete, o
         const isPending = log.approvalStatus === 'pending';
         const trustLevel = calculateTrustLevel(log);
         const trust = TRUST_CONFIG[trustLevel];
-        const CategoryIcon = CATEGORY_ICONS[log.category] || Wrench;
         
-        const sysDate = log.createdAt?.toDate ? log.createdAt.toDate() : new Date(log.createdAt);
+        const sysDate = log.createdAt?.toDate ? log.createdAt.toDate() : (log.createdAt ? new Date(log.createdAt) : null);
         
         const isCreator = user?.uid === log.creatorId;
         const isOfficial = log.verificationSource === 'Workshop' || log.verificationSource === 'Official';
@@ -281,7 +296,7 @@ export function HistoryList({ logs, showPrivateData = false, onEdit, onDelete, o
                       ) : (
                         <>
                           <CalendarCheck className="w-4 h-4 text-green-500" />
-                          <span className="text-sm font-black uppercase">{isValid(sysDate) ? format(sysDate, 'yyyy-MM-dd') : '---'}</span>
+                          <span className="text-sm font-black uppercase">{sysDate && isValid(sysDate) ? format(sysDate, 'yyyy-MM-dd') : '---'}</span>
                         </>
                       )}
                     </div>
@@ -304,6 +319,15 @@ export function HistoryList({ logs, showPrivateData = false, onEdit, onDelete, o
                     <p className="text-[10px] font-black uppercase opacity-40 mb-2 tracking-widest">Beskrivning</p>
                     <p className="text-base text-slate-300 leading-relaxed italic font-medium">
                       "{log.notes}"
+                    </p>
+                  </div>
+                )}
+
+                {trustLevel === 'Bronze' && showPrivateData && !isOwnershipTransfer && (
+                  <div className="mt-2 mb-6 p-4 bg-orange-500/10 border border-orange-500/20 rounded-2xl flex items-start gap-3 animate-in fade-in slide-in-from-top-2">
+                    <AlertCircle className="w-5 h-5 text-orange-500 shrink-0 mt-0.5" />
+                    <p className="text-[11px] text-orange-200/70 leading-relaxed italic">
+                      Denna post registrerades mer än 90 dagar efter utförandet. För att förbättra bilens betyg, registrera framtida service inom 7–90 dagar.
                     </p>
                   </div>
                 )}

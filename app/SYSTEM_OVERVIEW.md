@@ -1,56 +1,52 @@
 
-# AutoLog - Teknisk Systemritning & Produktionsmanual (Blueprint)
+# AutoLog – Din digitala annons och servicebok (Teknisk Blueprint)
 
 ## 1. Övergripande Arkitektur
-AutoLog är en plattform för verifierad fordonshistorik och marknadsplats. Systemet bygger på en "Trust-First"-princip där relationell datalåsning, mätarsäkring och integrerad annonsering samverkar för att skapa en manipuleringssäker miljö.
+AutoLog är marknadens första hybrida plattform som förenar en verifierad digital servicebok med en integrerad marknadsplats. Systemet bygger på en "Trust-First"-princip där relationell datalåsning, mätarsäkring och avancerad tillförlitlighetslogik samverkar.
 
 - **Frontend**: Next.js 15 (App Router), React 19, Tailwind CSS, ShadCN UI.
 - **Backend**: Firebase (Firestore, Authentication, Storage).
-- **Namn**: AutoLog – Din digitala annons och servicebok.
+- **AI-Motor**: Genkit för dokumentverifiering och dataextraktion.
 
-## 2. Unika Försäljningsargument (USP)
-AutoLog är den första tjänsten på marknaden som integrerar bilens hela livscykel:
-1. **Sömlös Övergång**: En bil går från att ha en privat servicebok till att bli en publik annons med ett klick.
-2. **Mätarsäkrad**: Ett verifierat "besiktningsgolv" förhindrar mätarfusk permanent.
-3. **Verkstadsstämpel**: Professionella aktörer kan sätta låsta digitala stämplar som ger omedelbar trovärdighet.
+## 2. CarGuard Tillförlitlighetslogik (Version 4)
+Systemet använder principen om "Dubbla Datum" för att eliminera efterhandsfusk. Varje servicepost har ett **Utförandedatum** (fysisk service) och ett låst **Systemdatum** (när posten skapades i appen).
 
-## 3. Databasstruktur (Firestore)
-All global data lagras under `/artifacts/{projectId}/public/data/` för centraliserad säkerhet.
+### 2.1 Tidsgap & Zoner
+Tidsgapet beräknas som: `Systemdatum - Utförandedatum`.
+- **Guld-zon**: 0–7 dagar (Realtid).
+- **Silver-zon**: 8–90 dagar (Godkänd efterhandsregistrering).
+- **Brons-zon**: > 90 dagar (Osäker historik).
 
-### 3.1 Fordonsregister
-- `/cars/{licensePlate}`: Bilens aktuella status, nuvarande ägare, miltal och "besiktningsgolv".
-- `/users/{userId}/vehicles/{licensePlate}`: Användarens privata garage (speglad data).
+### 2.2 Klassificeringsregler
+Statusen beräknas i realtid baserat på följande prioriteringsordning:
+1.  **🏆 Guld**: Alla av de 3 senaste serviceposterna måste ligga i Guld-zonen (0–7 dagar).
+2.  **🥈 Silver**: Kräver minst 2 totala poster OCH att majoriteten (> 50%) av alla poster ligger i Guld- eller Silver-zonen.
+3.  **🥉 Brons**: Standardläge. Allt som inte uppfyller kraven ovan (inklusive bilar med endast 1 post).
 
-### 3.2 Servicehistorik (Permanent)
-- `/vehicleHistory/{licensePlate}/logs/{logId}`:
-    - `ownerId`: UID för ägaren vid servicetillfället (Kritiskt för GDPR).
-    - `creatorId`: UID för skaparen (Verkstad eller Ägare).
-    - `verificationSource`: 'Workshop', 'AI', 'Official' eller 'User'.
-    - `photoUrl`: Innehåller Base64-sträng för bilder för att garantera tillgänglighet och snabbhet.
+### 2.3 Uppgraderingsbarhet
+Användare kan "tvätta" ett dåligt betyg genom att börja registrera service korrekt. Gamla "Brons-poster" kan spädas ut med nya korrekta inmatningar tills majoritetskravet för Silver eller Guld uppfylls.
 
-## 4. Kritiska Affärsregler
+## 3. Fordonsregister & Mätarsäkring
+- **Besiktningsgolv**: Ett fordon får aldrig sänkas i miltal av en privatperson utan verifierat bildbevis på besiktningsprotokoll.
+- **Globalt Register**: `/artifacts/{projectId}/public/data/cars/{licensePlate}` lagrar den officiella statusen som följer bilen vid ägarbyte.
 
-### 4.1 Mätarsäkring ("Besiktningsgolvet")
-- **Princip**: Ett fordon får aldrig sänkas i miltal av en privatperson utan bildbevis på besiktningsprotokoll.
-- **Admin-kontroll**: Varje manuell sänkning skapar en `odometer_correction` som kräver manuellt godkännande av en Huvudadmin.
+## 4. Verkstadsportalen
+Professionella aktörer kan sätta digitala stämplar som:
+- Skapar en låst servicepost i bilens historik.
+- Inkluderar kvitto och dokumentbevis.
+- Kräver ägarens godkännande innan de blir publika.
+- Ger omedelbar "Verkstadshistorik"-badge som höjer bilens andrahandsvärde.
 
-### 4.2 GDPR & Relationell Låsning
-- **Privat Data**: Kvitto-bilder och kostnader är låsta till den person som ägde bilen när servicen gjordes.
-- **Ägarbyte**: Vid försäljning ser den nya ägaren ATT service gjorts (vilket höjer värdet), men kvittot markeras som "Dolt pga GDPR" för att skydda tidigare ägares integritet.
+## 5. Marknadsplats & Försäljning
+- **Sömlös övergång**: En privat servicebok förvandlas till en publik annons med ett klick.
+- **Publik åtkomst**: Marknadsplatsen och "Visa telefonnummer" är tillgängliga för gäster utan inloggning för att maximera räckvidden.
+- **Säkra ägarbyten**: Överlåtelse sker via digitala koder i chatten. Vid slutförd affär byter `ownerId`, miltalet låses som ett nytt "golv" och historiken följer med till den nya ägaren.
 
-## 5. Designstandard för Profilbilder & Ikoner
-För att omedelbart signalera tillit används olika ramar:
-- **Privatpersoner**: Cirkulär ram (`rounded-full`) för en personlig känsla.
-- **Verkstäder**: Kvadratisk ram med runda hörn (`rounded-lg/xl`) + Blå "Verkstad"-ikon.
-- **Placering**: Dessa standarder efterlevs i Chatten, Händelse-hubben, Annonsvyn och Timeline.
+## 6. GDPR & Integritet
+- **Relationell Låsning**: Kvitton och känsliga kostnadsuppgifter är låsta till den person som ägde bilen vid servicetillfället.
+- **Maskering**: Vid ägarbyte ser den nya ägaren ATT service gjorts, men dokumentbilderna markeras som "Dolt pga GDPR" för att skydda tidigare ägares integritet.
 
-## 6. Teknisk Bildhantering (Production-Ready)
-För att säkerställa att appen aldrig "tuggar" eller nekas åtkomst pga CORS (Cross-Origin Resource Sharing):
-- **Plan A**: Uppladdning till Firebase Storage (för annonsbilder).
-- **Plan B (Fail-safe)**: Direkt lagring av Base64 i Firestore (för verkstadsstämplar och kvitton). Detta gör att service kan registreras blixtsnabbt även i instabila miljöer.
-
-## 7. Roller & Åtkomst
-- **Huvudadmin**: Full tillgång, kan radera fordon och historik permanent.
-- **Moderator**: Hanterar användare och annonser.
-- **Verkstad**: Kan sätta digitala stämplar som kräver ägarens godkännande.
-- **Användare**: Kan logga egen historik och sälja sitt fordon.
+## 7. Teknisk Bildhantering
+För att säkerställa stabilitet och undvika nätverksfel (CORS) i utvecklingsmiljöer används en "Fail-safe"-metod:
+- Bilder för verkstadsstämplar och kvitton sparas som **Base64-strängar** direkt i Firestore.
+- Detta garanterar att historik kan dokumenteras blixtsnabbt oavsett molnlagringens status.

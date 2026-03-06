@@ -48,7 +48,7 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
     return () => unsub();
   }, [db, plate, appId]);
 
-  // Hämta säljarens profil dynamiskt för att få med bild och användartyp
+  // Hämta säljarens profil dynamiskt för att få med bild, telefon och användartyp
   const sellerProfileRef = useMemoFirebase(() => {
     if (!db || !vehicle?.ownerId) return null;
     return doc(db, 'artifacts', appId, 'public', 'data', 'public_profiles', vehicle.ownerId);
@@ -80,6 +80,7 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
 
   const isOwner = user?.uid === vehicle?.ownerId;
   const displaySellerName = sellerProfile?.name || vehicle?.ownerName || 'Verifierad medlem';
+  const displaySellerPhone = sellerProfile?.phoneNumber || vehicle?.ownerPhone || 'Inget nummer angivet';
   const isWorkshopSeller = sellerProfile?.userType === 'Workshop';
 
   const images = useMemo(() => {
@@ -317,7 +318,7 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
                     Skicka meddelande
                   </Button>
                   <Button variant="outline" className="w-full h-16 rounded-[1.5rem] border-white/10 text-lg font-bold" onClick={() => setShowPhone(!showPhone)}>
-                    <Phone className="mr-3 w-5 h-5 text-accent" /> {showPhone ? (vehicle.ownerPhone || "Inget nummer angivet") : "Visa telefonnummer"}
+                    <Phone className="mr-3 w-5 h-5 text-accent" /> {showPhone ? displaySellerPhone : "Visa telefonnummer"}
                   </Button>
                 </div>
               )}

@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useEffect, useRef } from 'react';
@@ -10,13 +9,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge';
 import { Loader2, Camera, CheckCircle2, Upload, Trash2, ImagePlus, AlertCircle, Gauge } from 'lucide-react';
 import { useUser, useFirestore } from '@/firebase';
-import { doc, updateDoc, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp, setDoc, writeBatch, collection, getDocs } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
-import { Vehicle } from '@/types/autolog';
+import { Vehicle, VehicleLog } from '@/types/autolog';
 import { SWEDISH_CAR_BRANDS } from '@/constants/car-brands';
 import { firebaseConfig } from '@/firebase/config';
 import { sanitize } from '@/lib/utils';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { calculateOverallTrust } from '@/components/history-list';
 
 const processImage = (dataUri: string): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -40,7 +40,7 @@ const processImage = (dataUri: string): Promise<string> => {
         reject(e);
       }
     };
-    img.onerror = reject;
+    reject;
     img.src = dataUri;
   });
 };
@@ -96,7 +96,6 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
     const startCamera = async () => {
       if (isCameraActive && videoRef.current) {
         try {
-          // Försök med baksideskamera först, annars fallback till valfri kamera (fixar NotReadableError på PC)
           try {
             stream = await navigator.mediaDevices.getUserMedia({ 
               video: { facingMode: { ideal: 'environment' } } 
@@ -205,6 +204,12 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
       const plate = vehicle.licensePlate.toUpperCase().replace(/[^A-Z0-9]/g, '');
       const batch = writeBatch(db);
       
+      // Hämta historiken för att räkna om tillit innan sparning
+      const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs');
+      const logsSnap = await getDocs(logsRef);
+      const logs = logsSnap.docs.map(d => d.data() as VehicleLog);
+      const currentTrust = calculateOverallTrust(logs);
+
       const globalRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate);
       const privateRef = doc(db, 'artifacts', appId, 'users', user.uid, 'vehicles', plate);
       const listingRef = doc(db, 'artifacts', appId, 'public', 'data', 'public_listings', plate);
@@ -212,10 +217,10 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
       const updates: any = sanitize({ 
         ...formData, 
         mainImage: photoPreview,
+        overallTrust: currentTrust,
         updatedAt: serverTimestamp() 
       });
 
-      // Synka bildgalleri om bilden ändrats (löser buggen med låsta bilder)
       if (photoPreview && photoPreview !== vehicle.mainImage) {
         updates.imageUrls = [photoPreview, ...(vehicle.imageUrls?.slice(1) || [])];
       }

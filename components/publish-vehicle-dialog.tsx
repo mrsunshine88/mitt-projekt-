@@ -10,12 +10,12 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2, Camera, X, ShieldCheck } from 'lucide-react';
 import { useUser, useFirestore } from '@/firebase';
-import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, getDoc, serverTimestamp, collection, getDocs, writeBatch } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
-import { Vehicle } from '@/types/autolog';
-import { getAuth } from 'firebase/auth';
+import { Vehicle, VehicleLog } from '@/types/autolog';
 import { firebaseConfig } from '@/firebase/config';
 import { sanitize } from '@/lib/utils';
+import { calculateOverallTrust } from '@/components/history-list';
 
 const compressImage = (dataUri: string): Promise<string> => {
   return new Promise((resolve) => {
@@ -44,6 +44,7 @@ export function PublishVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boo
   const [previews, setPreviews] = useState<string[]>([]);
   const [hasNewImages, setHasNewImages] = useState(false);
   const db = useFirestore();
+  const { user } = useUser();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const appId = firebaseConfig.projectId;
@@ -99,13 +100,23 @@ export function PublishVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boo
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const auth = getAuth();
-    if (!auth.currentUser || !db || !vehicle) return;
+    if (!user || !db || !vehicle) return;
     setLoading(true);
     
     try {
       const plate = (vehicle.licensePlate || vehicle.id || '').toUpperCase().replace(/\s/g, '');
       if (!plate) throw new Error("Fordonet saknar identifierare.");
+
+      // Hämta säljarens profil för att få telefonnummer
+      const userDoc = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'public_profiles', user.uid));
+      const userData = userDoc.exists() ? userDoc.data() : {};
+      const sellerPhone = userData.phoneNumber || '';
+
+      // Beräkna tillit-status baserat på faktiska loggar innan publicering
+      const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs');
+      const logsSnap = await getDocs(logsRef);
+      const logs = logsSnap.docs.map(d => d.data() as VehicleLog);
+      const currentTrust = calculateOverallTrust(logs);
 
       const carRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate);
       const carSnap = await getDoc(carRef);
@@ -121,20 +132,31 @@ export function PublishVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boo
         licensePlate: plate,
         currentOdometerReading: carData.currentOdometerReading || vehicle.currentOdometerReading || 0,
         mainImage: carData.mainImage || vehicle.mainImage || null,
-        ownerId: carData.ownerId || vehicle.ownerId || auth.currentUser.uid,
+        ownerId: carData.ownerId || vehicle.ownerId || user.uid,
+        ownerName: userData.name || carData.ownerName || 'Säljare',
+        ownerPhone: sellerPhone || carData.ownerPhone || null,
         ...formData,
         adMainImage: finalAdMainImage,
         adImageUrls: finalAdImageUrls,
         isPublished: true,
+        overallTrust: currentTrust,
         updatedAt: serverTimestamp(),
       });
 
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'public_listings', plate), updatePayload, { merge: true });
-      await setDoc(carRef, updatePayload, { merge: true });
+      const batch = writeBatch(db);
       
-      const ownerToUpdate = carData.ownerId || vehicle.ownerId || auth.currentUser.uid;
+      // Uppdatera marknadsplatsen
+      batch.set(doc(db, 'artifacts', appId, 'public', 'data', 'public_listings', plate), updatePayload, { merge: true });
+      
+      // Uppdatera det globala registret
+      batch.set(carRef, updatePayload, { merge: true });
+      
+      // Uppdatera användarens privata garage
+      const ownerToUpdate = carData.ownerId || vehicle.ownerId || user.uid;
       const privateRef = doc(db, 'artifacts', appId, 'users', ownerToUpdate, 'vehicles', plate);
-      await setDoc(privateRef, updatePayload, { merge: true });
+      batch.set(privateRef, updatePayload, { merge: true });
+      
+      await batch.commit();
       
       toast({ title: vehicle.isPublished ? "Annons ändrad!" : "Annons publicerad!" });
       onClose();
@@ -219,8 +241,8 @@ export function PublishVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boo
                 <div key={i} className="aspect-square relative rounded-xl overflow-hidden border border-white/10 group">
                   <img src={p} alt="Preview" className="w-full h-full object-cover" />
                   <button type="button" onClick={() => {
-                    const newPreviews = previews.filter((_, idx) => idx !== i);
-                    setPreviews(newPreviews);
+                    const nextPreviews = previews.filter((_, idx) => idx !== i);
+                    setPreviews(nextPreviews);
                     setHasNewImages(true);
                   }} className="absolute top-1 right-1 bg-black/60 p-1 rounded-full"><X className="w-3 h-3 text-white" /></button>
                 </div>

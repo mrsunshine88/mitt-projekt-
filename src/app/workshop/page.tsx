@@ -16,6 +16,7 @@ import { firebaseConfig } from '@/firebase/config';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { calculateOverallTrust } from '@/components/history-list';
 
 export default function WorkshopPage() {
   const { user, isUserLoading } = useUser();
@@ -155,8 +156,6 @@ export default function WorkshopPage() {
       const logId = editingLog?.id || doc(logsRef).id;
       const logDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs', logId);
 
-      // Vi skippar Firebase Storage helt för att undvika CORS-fel i utvecklingsmiljön.
-      // Bilden sparas istället direkt i Firestore-dokumentet.
       const logData = {
         id: logId,
         vehicleId: plate,
@@ -169,8 +168,8 @@ export default function WorkshopPage() {
         odometer: newLog.odometer,
         cost: newLog.cost || null,
         notes: newLog.notes || '',
-        photoUrl: newLog.photoUrl || null, // Sparas direkt i Firestore
-        hasStoragePhoto: false, // Flagga för att indikera att vi inte behöver hämta från Storage
+        photoUrl: newLog.photoUrl || null,
+        hasStoragePhoto: false,
         isVerified: true, 
         approvalStatus: 'pending',
         verificationSource: 'Workshop',
@@ -179,13 +178,26 @@ export default function WorkshopPage() {
       };
 
       batch.set(logDocRef, logData, { merge: true });
+      
+      // Hämta befintliga loggar för att beräkna ny tillit-nivå
+      const logsSnap = await getDocs(logsRef);
+      const currentLogs = logsSnap.docs.map(d => ({ ...d.data(), id: d.id }));
+      const tempLogs = editingLog 
+        ? currentLogs.map(l => l.id === logId ? { ...l, ...logData } : l)
+        : [...currentLogs, { ...logData, createdAt: { toDate: () => new Date() } }];
+      
+      const newTrust = calculateOverallTrust(tempLogs as any);
+
       batch.set(doc(db, 'artifacts', appId, 'public', 'data', 'workshops', user.uid, 'servicedCars', plate), {
         id: plate, licensePlate: plate, make: vehicle.make, model: vehicle.model, mainImage: vehicle.mainImage || null, lastServicedAt: serverTimestamp()
       }, { merge: true });
 
+      const carUpdates: any = { overallTrust: newTrust, updatedAt: serverTimestamp() };
       if (newLog.odometer && newLog.odometer > vehicle.currentOdometerReading) {
-        batch.update(doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate), { currentOdometerReading: newLog.odometer, updatedAt: serverTimestamp() });
+        carUpdates.currentOdometerReading = newLog.odometer;
       }
+
+      batch.update(doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate), carUpdates);
 
       if (vehicle.ownerId) {
         batch.set(doc(db, 'artifacts', appId, 'public', 'data', 'pending_approvals', `${plate}_${user.uid}`), {

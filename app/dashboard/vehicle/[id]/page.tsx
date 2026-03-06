@@ -192,7 +192,17 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
         batch.set(doc(collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs')), { ...logData, createdAt: serverTimestamp() });
       }
       
-      const vehicleUpdates: any = { updatedAt: serverTimestamp() };
+      // Beräkna ny tillit efter sparning
+      const tempLogs = editingLog 
+        ? rawLogs?.map(l => l.id === editingLog.id ? { ...l, ...logData } : l)
+        : [...(rawLogs || []), { ...logData, createdAt: { toDate: () => new Date() } }];
+      const newOverallTrust = calculateOverallTrust(tempLogs as any);
+
+      const vehicleUpdates: any = { 
+        updatedAt: serverTimestamp(),
+        overallTrust: newOverallTrust 
+      };
+      
       if (newLog.odometer && newLog.odometer > vehicle.currentOdometerReading) {
         vehicleUpdates.currentOdometerReading = newLog.odometer;
         if (newLog.category === 'Besiktning') {
@@ -200,7 +210,16 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
         }
       }
       
-      batch.update(doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate), vehicleUpdates);
+      const carRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate);
+      const privateRef = doc(db, 'artifacts', appId, 'users', user.uid, 'vehicles', plate);
+      const listingRef = doc(db, 'artifacts', appId, 'public', 'data', 'public_listings', plate);
+
+      batch.update(carRef, vehicleUpdates);
+      batch.update(privateRef, vehicleUpdates);
+      if (vehicle.isPublished) {
+        batch.update(listingRef, { overallTrust: newOverallTrust, updatedAt: serverTimestamp() });
+      }
+
       await batch.commit();
       toast({ title: "Historik uppdaterad" });
       setEditingLog(null);
@@ -220,6 +239,18 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
         updatedAt: serverTimestamp() 
       });
       batch.delete(notificationRef);
+
+      // Uppdatera tillit-status efter godkännande
+      const updatedLogs = rawLogs?.map(l => l.id === log.id ? { ...l, approvalStatus: 'approved' } : l);
+      const newTrust = calculateOverallTrust(updatedLogs as any);
+      
+      const carRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate);
+      batch.update(carRef, { overallTrust: newTrust, updatedAt: serverTimestamp() });
+      
+      if (vehicle.isPublished) {
+        const listingRef = doc(db, 'artifacts', appId, 'public', 'data', 'public_listings', plate);
+        batch.update(listingRef, { overallTrust: newTrust, updatedAt: serverTimestamp() });
+      }
 
       if (log.creatorId) {
         const workshopNotifRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'workshop_notifications'));
@@ -283,48 +314,25 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
     if (!db || !user || !vehicle) return;
     try {
       const batch = writeBatch(db);
-      
-      // 1. Radera själva loggen
       batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs', log.id));
       
-      // 2. STÄDNING: Radera väntande godkännanden (notiser för ägare)
       if (log.creatorId) {
         batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'pending_approvals', `${plate}_${log.creatorId}`));
       }
       
-      // 3. STÄDNING: Hitta och radera alla verkstadsnotiser (svar) kopplade till denna specifika logg
       const notifsRef = collection(db, 'artifacts', appId, 'public', 'data', 'workshop_notifications');
       const qNotifs = query(notifsRef, where('plate', '==', plate));
       const notifsSnap = await getDocs(qNotifs);
-      
-      notifsSnap.forEach(d => {
-        const data = d.data();
-        // Om notisen innehåller log-id:t i sin logData, ta bort den
-        if (data.logData?.id === log.id) {
-          batch.delete(d.ref);
-        }
-      });
+      notifsSnap.forEach(d => { if (d.data().logData?.id === log.id) batch.delete(d.ref); });
 
-      // 4. KUNDLISTA-STÄDNING: Om detta var den sista loggen från denna skapare på denna bil, 
-      // ta bort bilen från verkstadens register.
-      if (log.creatorId) {
-        const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs');
-        const qLogs = query(logsRef, where('creatorId', '==', log.creatorId));
-        const logsSnap = await getDocs(qLogs);
-        
-        // Kontrollera om det finns några andra loggar kvar från samma skapare
-        const remainingLogs = logsSnap.docs.filter(d => d.id !== log.id);
-        if (remainingLogs.length === 0) {
-          batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'workshops', log.creatorId, 'servicedCars', plate));
-        }
-      }
-      
+      // Uppdatera tillit-status efter radering
+      const updatedLogs = rawLogs?.filter(l => l.id !== log.id);
+      const newTrust = calculateOverallTrust(updatedLogs as any);
+      batch.update(doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate), { overallTrust: newTrust, updatedAt: serverTimestamp() });
+
       await batch.commit();
       toast({ title: "Historikpost raderad" });
-    } catch (e: any) { 
-      console.error("Delete log error:", e);
-      toast({ variant: "destructive", title: "Kunde inte radera", description: e.message }); 
-    }
+    } catch (e: any) { toast({ variant: "destructive", title: "Kunde inte radera", description: e.message }); }
   };
 
   const handleDeleteFromGarage = async () => {
@@ -356,19 +364,14 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
     setIsHardDeleting(true);
     try {
       const batch = writeBatch(db);
-      
       batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate));
       batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'public_listings', plate));
-      
       const logsSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs'));
       logsSnap.forEach(l => batch.delete(l.ref));
-      
       const approvalsSnap = await getDocs(query(collection(db, 'artifacts', appId, 'public', 'data', 'pending_approvals'), where('plate', '==', plate)));
       approvalsSnap.forEach(a => batch.delete(a.ref));
-      
       const workshopNotifsSnap = await getDocs(query(collection(db, 'artifacts', appId, 'public', 'data', 'workshop_notifications'), where('plate', '==', plate)));
       workshopNotifsSnap.forEach(wn => batch.delete(wn.ref));
-
       const convosQ = query(collection(db, 'artifacts', appId, 'public', 'data', 'conversations'), where('carId', '==', plate));
       const convosSnap = await getDocs(convosQ);
       for (const convo of convosSnap.docs) {
@@ -376,7 +379,6 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
         msgsSnap.forEach(m => batch.delete(m.ref));
         batch.delete(convo.ref);
       }
-      
       await batch.commit();
       toast({ title: "Fordon och all tillhörande data raderad permanent." });
       router.push('/admin');

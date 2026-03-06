@@ -1,10 +1,16 @@
+
+"use client";
+
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Gauge, ShieldCheck, Share2, ArrowRight, Car, Lock, Smartphone, Image as ImageIcon, Wrench } from 'lucide-react';
+import { Gauge, ShieldCheck, Share2, ArrowRight, Car, Lock, Smartphone, Image as ImageIcon, Wrench, Search, Loader2 } from 'lucide-react';
 import Image from 'next/image';
+import { useUser } from '@/firebase';
 
 export default function Home() {
+  const { user, isUserLoading } = useUser();
+
   return (
     <div className="flex flex-col min-h-screen">
       {/* Hero Section */}
@@ -23,16 +29,31 @@ export default function Home() {
           </p>
 
           <div className="flex flex-col sm:flex-row gap-4 justify-center pt-8">
-            <Button size="lg" className="rounded-full text-lg h-16 px-10 shadow-xl shadow-primary/20 group" asChild>
-              <Link href="/dashboard">
-                Skapa din servicebok <ArrowRight className="ml-2 group-hover:translate-x-1 transition-transform" />
-              </Link>
-            </Button>
-            <Button size="lg" variant="outline" className="rounded-full text-lg h-16 px-10 border-white/10 hover:bg-white/5" asChild>
-              <Link href="/browse">
-                Utforska annonser
-              </Link>
-            </Button>
+            {isUserLoading ? (
+              <div className="h-16 flex items-center justify-center">
+                <Loader2 className="w-6 h-6 animate-spin text-primary opacity-20" />
+              </div>
+            ) : user ? (
+              <Button size="lg" className="rounded-full text-lg h-16 px-10 shadow-xl shadow-primary/20 group animate-in fade-in zoom-in duration-500" asChild>
+                <Link href="/dashboard">
+                  Gå till mitt garage <ArrowRight className="ml-2 group-hover:translate-x-1 transition-transform" />
+                </Link>
+              </Button>
+            ) : (
+              <div className="flex flex-col sm:flex-row gap-4 animate-in fade-in zoom-in duration-500">
+                <Button size="lg" className="rounded-full text-lg h-16 px-10 shadow-xl shadow-primary/20 group" asChild>
+                  <Link href="/login?mode=signup">
+                    Registrera dig idag <ArrowRight className="ml-2 group-hover:translate-x-1 transition-transform" />
+                  </Link>
+                </Button>
+                
+                <Button size="lg" className="rounded-full text-lg h-16 px-10 shadow-xl shadow-primary/20 group" asChild>
+                  <Link href="/browse">
+                    <Search className="w-5 h-5 mr-2" /> Utforska annonser
+                  </Link>
+                </Button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -109,9 +130,6 @@ export default function Home() {
                 <p className="text-lg">Säkra ägarbyten med digitala koder – historiken följer med bilen automatiskt.</p>
               </div>
             </div>
-            <Button size="lg" className="rounded-full h-14 px-8" asChild>
-              <Link href="/login">Registrera dig idag</Link>
-            </Button>
           </div>
           
           <div className="relative aspect-square max-w-md mx-auto lg:ml-auto">
