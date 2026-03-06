@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
@@ -5,7 +6,7 @@ import { doc, collection, query, where, onSnapshot } from 'firebase/firestore';
 import { getAuth, signOut } from 'firebase/auth';
 import { Search, Car, Inbox, UserCircle, ShieldAlert, Settings, LogOut, Menu, Wrench } from 'lucide-react';
 import { useMemo, useState, useEffect } from 'react';
-import { UserProfile } from '@/types/autolog';
+import { UserProfile, WorkshopNotification } from '@/types/autolog';
 import { Badge } from '@/components/ui/badge';
 import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { firebaseConfig } from '@/firebase/config';
@@ -18,6 +19,7 @@ export function Navbar() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [hasPendingApprovals, setHasPendingApprovals] = useState(false);
   const [hasPendingTransfers, setHasPendingTransfers] = useState(false);
+  const [unreadWorkshopNotifs, setUnreadWorkshopNotifs] = useState(0);
   const appId = firebaseConfig.projectId;
 
   const profileRef = useMemoFirebase(() => {
@@ -38,22 +40,35 @@ export function Navbar() {
   useEffect(() => {
     if (!db || !user) return;
 
-    // 1. Lyssna efter väntande verkstadsstämplar
+    // 1. Lyssna efter väntande verkstadsstämplar (för ägare)
     const pendingQuery = query(
       collection(db, 'artifacts', appId, 'public', 'data', 'pending_approvals'),
       where('ownerId', '==', user.uid)
     );
     const unsub1 = onSnapshot(pendingQuery, (snap) => setHasPendingApprovals(!snap.empty));
 
-    // 2. Lyssna efter inkommande bilöverlåtelser (Viktigt för köparen!)
+    // 2. Lyssna efter inkommande bilöverlåtelser (för köpare)
     const transferQuery = query(
       collection(db, 'artifacts', appId, 'public', 'data', 'cars'),
       where('pendingTransferTo', '==', user.uid)
     );
     const unsub2 = onSnapshot(transferQuery, (snap) => setHasPendingTransfers(!snap.empty));
 
+    // 3. Lyssna efter verkstadsnotiser (för verkstad)
+    if (isWorkshop) {
+      const workshopNotifQuery = query(
+        collection(db, 'artifacts', appId, 'public', 'data', 'workshop_notifications'),
+        where('workshopId', '==', user.uid),
+        where('read', '==', false)
+      );
+      const unsub3 = onSnapshot(workshopNotifQuery, (snap) => {
+        setUnreadWorkshopNotifs(snap.size);
+      });
+      return () => { unsub1(); unsub2(); unsub3(); };
+    }
+
     return () => { unsub1(); unsub2(); };
-  }, [db, user, appId]);
+  }, [db, user, appId, isWorkshop]);
 
   const convosQuery = useMemoFirebase(() => {
     if (!db || !user) return null;
@@ -81,8 +96,11 @@ export function Navbar() {
       {user && (
         <>
           {isWorkshop && (
-            <a href="/workshop" className="text-sm font-bold text-blue-400 hover:text-blue-300 flex items-center gap-2 py-3 md:py-0 transition-colors">
+            <a href="/workshop" className="text-sm font-bold text-blue-400 hover:text-blue-300 flex items-center gap-2 py-3 md:py-0 transition-colors relative">
               <Wrench className="w-4 h-4" /> Verkstad
+              {unreadWorkshopNotifs > 0 && (
+                <span className="absolute -top-1 -right-1 h-3 w-3 bg-red-500 rounded-full border-2 border-slate-900 animate-pulse" />
+              )}
             </a>
           )}
 

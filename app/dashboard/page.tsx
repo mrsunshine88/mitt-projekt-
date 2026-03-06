@@ -3,25 +3,28 @@
 
 import { useState, useMemo } from 'react';
 import { useUser, useFirestore, useCollection, useMemoFirebase } from '@/firebase';
-import { collection, query, where } from 'firebase/firestore';
+import { collection, query, where, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { Vehicle } from '@/types/autolog';
-import { Loader2, Plus, RefreshCw, Car, ShieldCheck, ShoppingCart, ArrowRight } from 'lucide-react';
+import { Loader2, Plus, RefreshCw, Car, ShieldCheck, ShoppingCart, ArrowRight, X } from 'lucide-react';
 import { AddVehicleDialog } from '@/components/add-vehicle-dialog';
 import { AcceptTransferDialog } from '@/components/accept-transfer-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { firebaseConfig } from '@/firebase/config';
+import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 
 export default function Dashboard() {
   const { user, isUserLoading } = useUser();
   const db = useFirestore();
+  const { toast } = useToast();
   const appId = firebaseConfig.projectId;
 
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [isAcceptOpen, setIsAcceptOpen] = useState(false);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
 
   // 1. Mina egna bilar - Hämtas direkt från det globala registret baserat på ägarskap
   const myVehiclesQuery = useMemoFirebase(() => {
@@ -52,6 +55,27 @@ export default function Dashboard() {
       return timeB - timeA;
     });
   }, [rawVehicles]);
+
+  const handleCancelIncomingTransfer = async (v: Vehicle) => {
+    if (!db || !user) return;
+    setCancellingId(v.id);
+    try {
+      const plate = v.licensePlate.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const globalRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate);
+      
+      await updateDoc(globalRef, {
+        pendingTransferTo: null,
+        pendingTransferFrom: null,
+        updatedAt: serverTimestamp()
+      });
+
+      toast({ title: "Överlåtelse nekad", description: "Du har tackat nej till detta fordonsköp." });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "Fel", description: e.message });
+    } finally {
+      setCancellingId(null);
+    }
+  };
 
   if (isUserLoading || (isVehiclesLoading && isIncomingLoading)) {
     return <div className="flex items-center justify-center min-h-[60vh]"><Loader2 className="w-12 h-12 animate-spin text-primary opacity-40" /></div>;
@@ -90,12 +114,22 @@ export default function Dashboard() {
                       <p className="text-sm text-muted-foreground italic">Väntar på att du ska godkänna överlåtelsen</p>
                     </div>
                   </div>
-                  <Button 
-                    className="h-14 px-10 rounded-2xl font-bold bg-green-600 hover:bg-green-500 text-white shadow-xl"
-                    onClick={() => { setSelectedVehicle(v); setIsAcceptOpen(true); }}
-                  >
-                    <ShoppingCart className="w-5 h-5 mr-2" /> Slutför köp
-                  </Button>
+                  <div className="flex gap-3">
+                    <Button 
+                      variant="ghost" 
+                      className="h-14 px-6 rounded-2xl font-bold text-destructive hover:bg-destructive/10"
+                      onClick={() => handleCancelIncomingTransfer(v)}
+                      disabled={cancellingId === v.id}
+                    >
+                      {cancellingId === v.id ? <Loader2 className="animate-spin" /> : <X className="w-5 h-5 mr-2" />} Neka
+                    </Button>
+                    <Button 
+                      className="h-14 px-10 rounded-2xl font-bold bg-green-600 hover:bg-green-500 text-white shadow-xl"
+                      onClick={() => { setSelectedVehicle(v); setIsAcceptOpen(true); }}
+                    >
+                      <ShoppingCart className="w-5 h-5 mr-2" /> Slutför köp
+                    </Button>
+                  </div>
                 </div>
               </Card>
             ))}

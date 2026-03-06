@@ -102,24 +102,34 @@ export function TransferOwnershipDialog({ isOpen, onClose, vehicle }: { isOpen: 
 
   const normalizedPlate = vehicle.licensePlate.toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
 
+  // KRITISKT: Vi filtrerar på 'sellerId' så att gamla chattar (där nuvarande ägare var köpare) döljs.
   const convosRef = useMemoFirebase(() => {
     if (!db || !user) return null;
     return query(
       collection(db, 'artifacts', appId, 'public', 'data', 'conversations'),
       where('carId', '==', normalizedPlate),
-      where('participants', 'array-contains', user.uid)
+      where('sellerId', '==', user.uid)
     );
   }, [db, user?.uid, appId, normalizedPlate]);
 
   const { data: rawConversations, isLoading: isLoadingConvos } = useCollection<Conversation>(convosRef);
 
-  // Kontextstyrd filtrering baserat på sökning
+  // Kontextstyrd filtrering: Ta endast med marknadsplats-chattar och dölj raderade/service-chattar
   const filteredBuyers = useMemo(() => {
     if (!rawConversations || !user) return [];
     return rawConversations.filter(c => {
+      // 1. Filtrera bort service-chattar och support-chattar
+      if (c.type === 'SERVICE' || c.type === 'SUPPORT' || c.carId === 'SUPPORT') {
+        return false;
+      }
+
       const buyerId = c.participants.find(p => p !== user.uid);
-      const buyerName = c.participantNames[buyerId || '']?.toLowerCase() || '';
-      return buyerName.includes(searchQuery.toLowerCase()) && !c.hiddenFor?.includes(user.uid);
+      const buyerName = (c.participantNames[buyerId || ''] || '').toLowerCase();
+      
+      // 2. Kontrollera om användaren har raderat/dolt chatten
+      const isHidden = c.hiddenFrom?.includes(user.uid);
+      
+      return !isHidden && buyerName.includes(searchQuery.toLowerCase());
     });
   }, [rawConversations, user, searchQuery]);
 
@@ -164,7 +174,7 @@ export function TransferOwnershipDialog({ isOpen, onClose, vehicle }: { isOpen: 
           <DialogHeader>
             <DialogTitle className="text-3xl font-headline font-bold text-white">Välj köpare</DialogTitle>
             <DialogDescription className="text-slate-400">
-              Endast personer du pratat med gällande <span className="text-primary font-bold">{vehicle.licensePlate}</span> visas här.
+              Endast personer du pratat med gällande <span className="text-primary font-bold">{vehicle.licensePlate}</span> via marknadsplatsen visas här.
             </DialogDescription>
           </DialogHeader>
         </div>
@@ -207,7 +217,7 @@ export function TransferOwnershipDialog({ isOpen, onClose, vehicle }: { isOpen: 
               <div className="px-6">
                 <p className="font-bold text-slate-300">Inga köpare hittades</p>
                 <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                  Köparen måste ha skickat minst ett meddelande gällande denna bil för att visas här.
+                  Köparen måste ha kontaktat dig via bilannonsen för att visas här. Service-chattar med verkstäder döljs automatiskt för din säkerhet.
                 </p>
               </div>
             </div>

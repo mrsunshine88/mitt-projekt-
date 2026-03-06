@@ -7,14 +7,42 @@ import { doc, collection, serverTimestamp, arrayRemove, arrayUnion } from 'fireb
 import { firebaseConfig } from '@/firebase/config';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Loader2, Send, ArrowLeft, Trash2, ShieldCheck, KeyRound, Lock } from 'lucide-react';
+import { Loader2, Send, ArrowLeft, Trash2, ShieldCheck, KeyRound, Lock, MessageSquare, Wrench } from 'lucide-react';
 import Link from 'next/link';
-import Image from 'next/image';
-import { Conversation } from '@/types/autolog';
+import { Conversation, UserProfile } from '@/types/autolog';
 import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
 import { useRouter } from 'next/navigation';
 import { updateDocumentNonBlocking, addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+
+function ChatAvatar({ userId, userType, name }: { userId: string, userType?: string, name?: string }) {
+  const db = useFirestore();
+  const appId = firebaseConfig.projectId;
+  const profileRef = useMemoFirebase(() => {
+    if (!db || !userId) return null;
+    return doc(db, 'artifacts', appId, 'public', 'data', 'public_profiles', userId);
+  }, [db, userId, appId]);
+  
+  const { data: profile } = useDoc<UserProfile>(profileRef);
+  const isWorkshop = profile?.userType === 'Workshop' || userType === 'Workshop';
+
+  return (
+    <div className="relative shrink-0">
+      <Avatar className={`h-8 w-8 ${isWorkshop ? 'rounded-lg' : 'rounded-full'} border border-white/10 shadow-sm`}>
+        <AvatarImage src={profile?.photoUrl} className="object-cover" />
+        <AvatarFallback className={`${isWorkshop ? 'rounded-lg' : 'rounded-full'} bg-primary/10 text-primary text-[10px] font-bold`}>
+          {profile?.name?.[0] || name?.[0] || 'U'}
+        </AvatarFallback>
+      </Avatar>
+      {isWorkshop && (
+        <div className="absolute -bottom-1 -right-1 bg-blue-600 rounded-sm p-0.5 border border-background">
+          <Wrench className="w-2 h-2 text-white" />
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ConversationPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -35,8 +63,19 @@ export default function ConversationPage({ params }: { params: Promise<{ id: str
 
   const { data: conversation, isLoading: isConvoLoading } = useDoc<Conversation>(convoRef);
 
-  // Ny roll-logik: isSeller baseras på vem som var säljare när tråden skapades
   const isSeller = conversation?.sellerId === user?.uid;
+  const isSupportChat = conversation?.carId === 'SUPPORT';
+  const isServiceChat = conversation?.type === 'SERVICE';
+  const isSalesChat = !isSupportChat && !isServiceChat;
+
+  const partnerId = conversation?.participants.find(p => p !== user?.uid);
+  
+  const partnerProfileRef = useMemoFirebase(() => {
+    if (!db || !partnerId) return null;
+    return doc(db, 'artifacts', appId, 'public', 'data', 'public_profiles', partnerId);
+  }, [db, partnerId, appId]);
+  
+  const { data: partnerProfile } = useDoc<UserProfile>(partnerProfileRef);
 
   const messagesRef = useMemoFirebase(() => {
     if (!db) return null;
@@ -45,14 +84,23 @@ export default function ConversationPage({ params }: { params: Promise<{ id: str
 
   const { data: rawMessages, isLoading: isMessagesLoading } = useCollection<any>(messagesRef);
 
-  const sortedMessages = useMemo(() => {
-    if (!rawMessages) return [];
-    return [...rawMessages].sort((a, b) => {
-      const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
-      const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
-      return timeA - timeB;
-    });
-  }, [rawMessages]);
+  const visibleMessages = useMemo(() => {
+    if (!rawMessages || !user || !conversation) return [];
+    
+    const userDeletedAt = conversation.deletedAt?.[user.uid]?.toDate?.() || null;
+    
+    return rawMessages
+      .filter((msg: any) => {
+        if (!userDeletedAt) return true;
+        const msgCreatedAt = msg.createdAt?.toDate?.() || new Date();
+        return msgCreatedAt > userDeletedAt;
+      })
+      .sort((a, b) => {
+        const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
+        const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
+        return timeA - timeB;
+      });
+  }, [rawMessages, user, conversation]);
 
   useEffect(() => {
     if (conversation && user && convoRef && statusUpdatedForId.current !== id) {
@@ -67,8 +115,7 @@ export default function ConversationPage({ params }: { params: Promise<{ id: str
         needsUpdate = true;
       }
       
-      // Endast säljaren kan generera koden för tråden
-      if (isSeller && !conversation.transferCode) {
+      if (isSeller && !conversation.transferCode && isSalesChat) {
         updates.transferCode = Math.floor(100000 + Math.random() * 900000).toString();
         needsUpdate = true;
       }
@@ -81,13 +128,13 @@ export default function ConversationPage({ params }: { params: Promise<{ id: str
         });
       }
     }
-  }, [conversation, user, convoRef, id, isSeller]);
+  }, [conversation, user, convoRef, id, isSeller, isSalesChat]);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [sortedMessages]);
+  }, [visibleMessages]);
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -97,7 +144,7 @@ export default function ConversationPage({ params }: { params: Promise<{ id: str
     const text = inputText.trim();
     setInputText('');
 
-    const partnerId = conversation?.participants.find(p => p !== user.uid);
+    const targetPartnerId = conversation?.participants.find(p => p !== user.uid);
     const messagesColRef = collection(db, 'artifacts', appId, 'public', 'data', 'conversations', id, 'messages');
     
     addDocumentNonBlocking(messagesColRef, {
@@ -111,8 +158,8 @@ export default function ConversationPage({ params }: { params: Promise<{ id: str
       lastMessage: text,
       lastMessageAt: serverTimestamp(),
       lastMessageSenderId: user.uid,
-      unreadBy: partnerId ? arrayUnion(partnerId) : [],
-      hiddenFor: [], 
+      unreadBy: targetPartnerId ? arrayUnion(targetPartnerId) : [],
+      hiddenFrom: [], 
       updatedAt: serverTimestamp()
     });
 
@@ -121,9 +168,14 @@ export default function ConversationPage({ params }: { params: Promise<{ id: str
 
   const handleHideConversation = () => {
     if (!user || !convoRef) return;
-    updateDocumentNonBlocking(convoRef, {
-      hiddenFor: arrayUnion(user.uid)
-    });
+    
+    const updates: any = {
+      hiddenFrom: arrayUnion(user.uid),
+      [`deletedAt.${user.uid}`]: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    };
+
+    updateDocumentNonBlocking(convoRef, updates);
     router.push('/inbox');
   };
 
@@ -133,8 +185,7 @@ export default function ConversationPage({ params }: { params: Promise<{ id: str
 
   if (!conversation || !user) return null;
 
-  const partnerId = conversation.participants.find(p => p !== user.uid);
-  const partnerName = conversation.participantNames[partnerId || ''] || 'Användare';
+  const partnerName = partnerProfile?.name || conversation.participantNames[partnerId || ''] || 'Användare';
   const rawCode = conversation.transferCode || '------';
   const formattedCode = rawCode.length === 6 ? `${rawCode.slice(0, 3)} ${rawCode.slice(3)}` : rawCode;
 
@@ -146,17 +197,12 @@ export default function ConversationPage({ params }: { params: Promise<{ id: str
             <Link href="/inbox" className="p-2 hover:bg-white/5 rounded-full transition-colors">
               <ArrowLeft className="w-5 h-5" />
             </Link>
-            <div className="relative h-12 w-12 rounded-lg overflow-hidden shrink-0 border border-white/10">
-              <Image 
-                src={conversation.carImageUrl || 'https://picsum.photos/seed/car/200/200'} 
-                alt={conversation.carTitle}
-                fill
-                className="object-cover"
-              />
-            </div>
+            <ChatAvatar userId={partnerId || ''} userType={isServiceChat ? 'Workshop' : 'CarOwner'} name={partnerName} />
             <div className="min-w-0">
               <h1 className="font-bold text-sm leading-tight truncate">{partnerName}</h1>
-              <p className="text-xs text-primary font-bold uppercase tracking-tight truncate">{conversation.carTitle}</p>
+              <p className={`text-xs font-bold uppercase tracking-tight truncate ${isSupportChat ? 'text-accent' : isServiceChat ? 'text-blue-400' : 'text-primary'}`}>
+                {conversation.carTitle}
+              </p>
             </div>
           </div>
           <Button variant="ghost" size="sm" onClick={handleHideConversation} className="text-muted-foreground hover:text-destructive rounded-full">
@@ -165,45 +211,47 @@ export default function ConversationPage({ params }: { params: Promise<{ id: str
         </div>
       </header>
 
-      {/* Överlåtelsekod-sektion: Endast den specifika säljaren ser koden */}
-      <div className={`py-4 px-4 border-b flex flex-col items-center justify-center gap-1 transition-colors ${isSeller ? 'bg-primary/10 border-primary/20' : 'bg-white/5 border-white/5'}`}>
-        {isSeller ? (
-          <>
-            <div className="flex items-center gap-2 text-primary">
-              <KeyRound className="w-4 h-4" />
-              <span className="text-[10px] font-bold uppercase tracking-widest">Din Överlåtelsekod</span>
-            </div>
-            <p className="text-2xl font-mono font-bold text-primary tracking-[0.2em] bg-background/50 px-4 py-1 rounded-lg border border-primary/20">
-              {formattedCode}
-            </p>
-            <p className="text-[10px] text-muted-foreground mt-1 text-center font-medium">
-              Ge denna kod till köparen när ni slutför affären.
-            </p>
-          </>
-        ) : (
-          <>
-            <div className="flex items-center gap-2 text-muted-foreground opacity-60">
-              <Lock className="w-4 h-4" />
-              <span className="text-[10px] font-bold uppercase tracking-widest">Väntar på bekräftelse</span>
-            </div>
-            <p className="text-sm text-center text-muted-foreground mt-1 max-w-[250px] italic">
-              Vänta på att säljaren ger dig överlåtelsekoden när affären slutförs.
-            </p>
-          </>
-        )}
-      </div>
+      {isSalesChat && (
+        <div className={`py-4 px-4 border-b flex flex-col items-center justify-center gap-1 transition-colors ${isSeller ? 'bg-primary/10 border-primary/20' : 'bg-white/5 border-white/5'}`}>
+          {isSeller ? (
+            <>
+              <div className="flex items-center gap-2 text-primary">
+                <KeyRound className="w-4 h-4" />
+                <span className="text-[10px] font-bold uppercase tracking-widest">Din Överlåtelsekod</span>
+              </div>
+              <p className="text-2xl font-mono font-bold text-primary tracking-[0.2em] bg-background/50 px-4 py-1 rounded-lg border border-primary/20">
+                {formattedCode}
+              </p>
+              <p className="text-[10px] text-muted-foreground mt-1 text-center font-medium">
+                Ge denna kod till köparen när ni slutför affären.
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 text-muted-foreground opacity-60">
+                <Lock className="w-4 h-4" />
+                <span className="text-[10px] font-bold uppercase tracking-widest">Väntar på bekräftelse</span>
+              </div>
+              <p className="text-sm text-center text-muted-foreground mt-1 max-w-[250px] italic">
+                Vänta på att säljaren ger dig överlåtelsekoden när affären slutförs.
+              </p>
+            </>
+          )}
+        </div>
+      )}
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4">
-        <div className="container max-w-4xl mx-auto space-y-4">
+        <div className="container max-w-4xl mx-auto space-y-6">
           {isMessagesLoading ? (
             <div className="flex justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
-          ) : sortedMessages.length > 0 ? (
-            sortedMessages.map((msg: any) => {
+          ) : visibleMessages.length > 0 ? (
+            visibleMessages.map((msg: any) => {
               const isMe = msg.senderId === user.uid;
               const msgDate = msg.createdAt?.toDate ? msg.createdAt.toDate() : new Date();
               return (
-                <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 shadow-sm ${isMe ? 'bg-primary text-white rounded-br-none' : 'bg-white/5 text-foreground rounded-bl-none border border-white/5'}`}>
+                <div key={msg.id} className={`flex gap-3 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
+                  <ChatAvatar userId={msg.senderId} name={isMe ? (user.displayName || 'Jag') : partnerName} />
+                  <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 shadow-sm ${isMe ? 'bg-primary text-white rounded-tr-none' : 'bg-white/5 text-foreground rounded-tl-none border border-white/5'}`}>
                     <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.text}</p>
                     <p className={`text-[10px] mt-1 opacity-60 ${isMe ? 'text-right' : 'text-left'}`}>
                       {format(msgDate, 'HH:mm', { locale: sv })}
@@ -224,7 +272,7 @@ export default function ConversationPage({ params }: { params: Promise<{ id: str
       <footer className="p-4 border-t border-white/5 bg-background">
         <form onSubmit={handleSendMessage} className="container max-w-4xl mx-auto flex gap-2">
           <Input 
-            placeholder="Skriv ett meddelande..." 
+            placeholder={isSupportChat ? "Skriv till supporten..." : isServiceChat ? "Skriv till ägaren..." : "Skriv ett meddelande..."}
             className="bg-white/5 rounded-full px-6 h-12 border-white/10"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}

@@ -12,13 +12,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, Trash2, ShieldAlert, UserCheck, RefreshCw, Star, Search, Shield, Car, ArrowRight, Ban, UserPlus, Maximize2, AlertTriangle } from 'lucide-react';
+import { Loader2, Trash2, ShieldAlert, UserCheck, RefreshCw, Star, Search, Shield, Car, ArrowRight, Ban, UserPlus, Maximize2, AlertTriangle, Edit3 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { UserProfile, Vehicle } from '@/types/autolog';
 import { firebaseConfig } from '@/firebase/config';
 import Link from 'next/link';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { PublishVehicleDialog } from '@/components/publish-vehicle-dialog';
 
 const SYSTEM_OWNER_EMAIL = 'apersson508@gmail.com';
 
@@ -29,7 +30,6 @@ export default function AdminPage() {
   const [activeTab, setActiveTab] = useState('users');
   const [refreshKey, setRefreshKey] = useState(0);
   
-  // States för sök
   const [plateSearch, setPlateSearch] = useState('');
   const [foundVehicle, setFoundVehicle] = useState<any>(null);
   const [searchingPlate, setSearchingPlate] = useState(false);
@@ -40,9 +40,12 @@ export default function AdminPage() {
   const [searchedUserForPersonnel, setSearchedUserForPersonnel] = useState<UserProfile | null>(null);
   const [isSearchingPersonnel, setIsSearchingPersonnel] = useState(false);
 
+  // States för redigering av annonser
+  const [isEditAdOpen, setIsEditAdOpen] = useState(false);
+  const [selectedAdForEdit, setSelectedAdForEdit] = useState<Vehicle | null>(null);
+
   const appId = firebaseConfig.projectId;
 
-  // Hämta inloggad admins profil
   const adminProfileRef = useMemoFirebase(() => {
     if (!db || !user?.uid) return null;
     return doc(db, 'artifacts', appId, 'public', 'data', 'public_profiles', user.uid);
@@ -52,7 +55,6 @@ export default function AdminPage() {
   const isSystemOwner = user?.email === SYSTEM_OWNER_EMAIL;
   const isHuvudAdmin = isSystemOwner || adminProfile?.role === 'Huvudadmin';
 
-  // Hämta data
   const listingsRef = useMemoFirebase(() => {
     if (!db) return null;
     return collection(db, 'artifacts', appId, 'public', 'data', 'public_listings');
@@ -81,7 +83,6 @@ export default function AdminPage() {
     corrections?.filter(c => c.status === 'pending') || [], 
   [corrections]);
 
-  // Funktioner
   const handleSearchPersonnel = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!db || !personnelSearch) return;
@@ -127,29 +128,21 @@ export default function AdminPage() {
       const batch = writeBatch(db);
       const plate = vehiclePlate.toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
 
-      // 1. Radera bilen från globala registret
       batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate));
-
-      // 2. Radera annonsen
       batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'public_listings', plate));
 
-      // 3. Radera historikposter
       const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs');
       const logsSnap = await getDocs(logsRef);
       logsSnap.forEach(l => batch.delete(l.ref));
 
-      // 4. Radera konversationer kopplade till bilen
       const convosRef = collection(db, 'artifacts', appId, 'public', 'data', 'conversations');
       const convosQ = query(convosRef, where('carId', '==', plate));
       const convosSnap = await getDocs(convosQ);
       
       for (const convoDoc of convosSnap.docs) {
-        // Radera alla meddelanden i konversationen
         const msgsRef = collection(db, 'artifacts', appId, 'public', 'data', 'conversations', convoDoc.id, 'messages');
         const msgsSnap = await getDocs(msgsRef);
         msgsSnap.forEach(m => batch.delete(m.ref));
-        
-        // Radera själva konversationen
         batch.delete(convoDoc.ref);
       }
 
@@ -161,6 +154,41 @@ export default function AdminPage() {
       toast({ variant: "destructive", title: "Fel vid hård radering", description: err.message });
     } finally {
       setIsHardDeleting(false);
+    }
+  };
+
+  const handleAdminRemoveAd = async (l: Vehicle) => {
+    if (!db || !isHuvudAdmin) return;
+    try {
+      const batch = writeBatch(db);
+      const plate = l.licensePlate.toUpperCase().replace(/\s/g, '');
+      
+      batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'public_listings', plate));
+      
+      batch.update(doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate), { 
+        isPublished: false, 
+        adMainImage: null,
+        adImageUrls: null,
+        price: null,
+        description: null,
+        updatedAt: serverTimestamp() 
+      });
+
+      if (l.ownerId) {
+        batch.update(doc(db, 'artifacts', appId, 'users', l.ownerId, 'vehicles', plate), {
+          isPublished: false,
+          adMainImage: null,
+          adImageUrls: null,
+          price: null,
+          description: null,
+          updatedAt: serverTimestamp()
+        });
+      }
+
+      await batch.commit();
+      toast({ title: "Annons och annonsdata raderade." });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Fel", description: err.message });
     }
   };
 
@@ -266,7 +294,7 @@ export default function AdminPage() {
                                 placeholder="RADERA" 
                                 value={hardDeleteConfirm} 
                                 onChange={(e) => setHardDeleteConfirm(e.target.value)} 
-                                className="h-14 text-center font-bold tracking-[0.3em] bg-white/5 rounded-xl border-destructive/20 focus:border-destructive" 
+                                className="h-14 text-center font-bold tracking-[0.3em] bg-white/5 border-destructive/20 focus:border-destructive" 
                               />
                             </div>
                             <AlertDialogFooter className="gap-3">
@@ -389,23 +417,52 @@ export default function AdminPage() {
             {listings?.map((l: Vehicle) => (
               <Card key={l.id} className="glass-card p-4 border-white/5 rounded-2xl group">
                 <div className="aspect-video relative rounded-xl overflow-hidden mb-4">
-                  <img src={l.mainImage || 'https://picsum.photos/seed/car/400/300'} className="w-full h-full object-cover" alt="" />
+                  <img src={l.adMainImage || l.mainImage || 'https://picsum.photos/seed/car/400/300'} className="w-full h-full object-cover" alt="" />
                 </div>
                 <div className="flex justify-between items-start">
                   <div>
                     <h3 className="font-bold">{l.make} {l.model}</h3>
                     <p className="text-[10px] font-mono opacity-60 uppercase">{l.licensePlate} • {l.price?.toLocaleString()} kr</p>
                   </div>
-                  <Button variant="ghost" size="icon" className="text-destructive opacity-0 group-hover:opacity-100 transition-opacity" onClick={async () => {
-                    await deleteDoc(doc(db!, 'artifacts', appId, 'public', 'data', 'public_listings', l.id));
-                    toast({ title: "Annons raderad" });
-                  }}><Trash2 className="w-4 h-4" /></Button>
+                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="text-primary hover:bg-primary/10" 
+                      onClick={() => {
+                        setSelectedAdForEdit(l);
+                        setIsEditAdOpen(true);
+                      }}
+                    >
+                      <Edit3 className="w-4 h-4" />
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="text-destructive hover:bg-destructive/10" 
+                      onClick={() => handleAdminRemoveAd(l)}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
               </Card>
             ))}
           </div>
         </TabsContent>
       </Tabs>
+
+      {selectedAdForEdit && (
+        <PublishVehicleDialog 
+          isOpen={isEditAdOpen} 
+          onClose={() => {
+            setIsEditAdOpen(false);
+            setSelectedAdForEdit(null);
+            setRefreshKey(prev => prev + 1);
+          }} 
+          vehicle={selectedAdForEdit} 
+        />
+      )}
     </div>
   );
 }

@@ -1,3 +1,4 @@
+
 rules_version = '2';
 service cloud.storage {
   match /b/{bucket}/o {
@@ -6,22 +7,25 @@ service cloud.storage {
       return request.auth != null;
     }
 
-    function getCarOwner(plate) {
-      // Hämtar ägar-ID från bilens officiella register i Firestore
-      return firestore.get(/databases/(default)/documents/artifacts/studio-3405255876-f647c/public/data/cars/$(plate)).data.ownerId;
-    }
-
     function isAdmin() {
-      // Verifierar administrativ roll via den publika profilen
-      return firestore.get(/databases/(default)/documents/artifacts/studio-3405255876-f647c/public/data/public_profiles/$(request.auth.uid)).data.role in ['Huvudadmin', 'Moderator'];
+      return isSignedIn() && request.auth.token.email == 'apersson508@gmail.com';
     }
 
-    // Skydda alla kvitton och dokumentbevis
     match /receipts/{plate}/{docId} {
-      allow read, write: if isSignedIn() && (request.auth.uid == getCarOwner(plate) || isAdmin());
+      // Fysisk blockering baserat på ownerId i Firestore
+      // Detta kräver att vi använder get() på Firestore-resursen
+      allow read: if isSignedIn() && (
+        isAdmin() ||
+        firestore.exists(/databases/(default)/documents/artifacts/studio-3405255876-f647c/public/data/vehicleHistory/$(plate)/logs/$(docId)) &&
+        (
+          firestore.get(/databases/(default)/documents/artifacts/studio-3405255876-f647c/public/data/vehicleHistory/$(plate)/logs/$(docId)).data.ownerId == request.auth.uid ||
+          firestore.get(/databases/(default)/documents/artifacts/studio-3405255876-f647c/public/data/vehicleHistory/$(plate)/logs/$(docId)).data.creatorId == request.auth.uid
+        )
+      );
+      
+      allow write, delete: if isSignedIn();
     }
 
-    // Standardregler för övriga filer (t.ex. profilbilder om de skulle flyttas hit)
     match /{allPaths=**} {
       allow read: if true;
       allow write: if isSignedIn();

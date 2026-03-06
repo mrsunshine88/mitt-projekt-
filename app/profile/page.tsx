@@ -8,9 +8,8 @@ import { updateProfile, getAuth } from 'firebase/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent } from '@/components/ui/card';
-import { Loader2, UserCircle, Camera, Upload, Trash2, Globe, MapPin, Building2, Phone, Mail, FileText } from 'lucide-react';
+import { Loader2, UserCircle, Camera, Upload, Trash2, Building2, Phone, Mail, FileText, MapPin, Globe } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { UserProfile } from '@/types/autolog';
 import { sanitize } from '@/lib/utils';
@@ -99,33 +98,47 @@ export default function ProfilePage() {
     setLoading(true);
     try {
       const auth = getAuth();
+      const normalizedEmail = formData.email.trim().toLowerCase();
+
+      // Uppdatera endast namn i Firebase Auth. 
+      // Vi hoppar över PhotoURL här eftersom Base64 är för långt för Autentiserings-tjänsten.
       if (auth.currentUser) {
         await updateProfile(auth.currentUser, { 
-          displayName: formData.name,
-          photoURL: photoPreview 
+          displayName: formData.name
         });
       }
 
       const batch = writeBatch(db);
       const updateData = sanitize({
         ...formData,
+        email: normalizedEmail,
         id: user.uid,
         userType: profile?.userType || 'CarOwner',
         photoUrl: photoPreview,
         updatedAt: serverTimestamp(),
       });
 
+      // 1. Uppdatera profiler (Firestore tillåter långa Base64-strängar)
       batch.set(userRef, updateData, { merge: true });
       const publicRef = doc(db, 'artifacts', appId, 'public', 'data', 'public_profiles', user.uid);
       batch.set(publicRef, sanitize({ ...updateData, updatedAt: serverTimestamp() }), { merge: true });
 
-      // 1. Uppdatera alla annonser
+      // 2. Namn-synkronisering över hela systemet
       const listingsRef = collection(db, 'artifacts', appId, 'public', 'data', 'public_listings');
       const qListings = query(listingsRef, where('ownerId', '==', user.uid));
       const listingsSnap = await getDocs(qListings);
-      listingsSnap.forEach((d) => batch.update(d.ref, { ownerName: formData.name, ownerPhone: formData.phoneNumber || null }));
+      listingsSnap.forEach((d) => batch.update(d.ref, { 
+        ownerName: formData.name, 
+        ownerPhone: formData.phoneNumber || null 
+      }));
 
-      // 2. Uppdatera alla konversationer (FIX: Namn i inkorgen)
+      const globalCarsRef = collection(db, 'artifacts', appId, 'public', 'data', 'cars');
+      const qCars = query(globalCarsRef, where('ownerId', '==', user.uid));
+      const carsOwnedSnap = await getDocs(qCars);
+      carsOwnedSnap.forEach((d) => batch.update(d.ref, { 
+        ownerName: formData.name 
+      }));
+
       const convosRef = collection(db, 'artifacts', appId, 'public', 'data', 'conversations');
       const qConvos = query(convosRef, where('participants', 'array-contains', user.uid));
       const convosSnap = await getDocs(qConvos);
@@ -138,22 +151,12 @@ export default function ProfilePage() {
         });
       });
 
-      // 3. Uppdatera alla historiska stämplar
-      const carsListRef = collection(db, 'artifacts', appId, 'public', 'data', 'cars');
-      const carsSnap = await getDocs(carsListRef);
-      for (const carDoc of carsSnap.docs) {
-        const plate = carDoc.id;
-        const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs');
-        const logsQuery = query(logsRef, where('creatorId', '==', user.uid));
-        const logsSnap = await getDocs(logsQuery);
-        logsSnap.forEach(l => batch.update(l.ref, { creatorName: formData.name }));
-      }
-
       await batch.commit();
-      toast({ title: "Profil och register uppdaterade!" });
+      toast({ title: "Profil uppdaterad!" });
       setIsEditing(false);
     } catch (err: any) { 
-      toast({ variant: "destructive", title: "Fel", description: err.message }); 
+      console.error("Save error:", err);
+      toast({ variant: "destructive", title: "Kunde inte spara", description: err.message }); 
     } finally { 
       setLoading(false); 
     }
@@ -168,7 +171,7 @@ export default function ProfilePage() {
     <div className="container max-w-3xl mx-auto px-4 py-12 text-white">
       <div className="flex flex-col items-center mb-12">
         <div className="relative group">
-          <div className="w-32 h-32 rounded-full bg-primary/10 border-4 border-white/5 flex items-center justify-center text-primary shadow-2xl overflow-hidden">
+          <div className={`w-32 h-32 ${isWorkshop ? 'rounded-[2rem]' : 'rounded-full'} bg-primary/10 border-4 border-white/5 flex items-center justify-center text-primary shadow-2xl overflow-hidden`}>
             {photoPreview ? (
               <img src={photoPreview} alt="Profil" className="w-full h-full object-cover" />
             ) : (
@@ -178,7 +181,7 @@ export default function ProfilePage() {
           {isEditing && (
             <button 
               onClick={() => fileInputRef.current?.click()}
-              className="absolute inset-0 bg-black/60 rounded-full flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+              className={`absolute inset-0 bg-black/60 ${isWorkshop ? 'rounded-[2rem]' : 'rounded-full'} flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity`}
             >
               <Camera className="w-6 h-6 text-white mb-1" />
               <span className="text-[10px] font-bold text-white uppercase">Ändra</span>
@@ -186,7 +189,7 @@ export default function ProfilePage() {
           )}
           <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
         </div>
-        <h1 className="mt-6 text-3xl font-headline font-bold lowercase">{formData.name || "Användare"}</h1>
+        <h1 className="mt-6 text-3xl font-headline font-bold">{formData.name || "Användare"}</h1>
         <p className="text-muted-foreground uppercase text-[10px] font-bold tracking-widest mt-1">
           {isWorkshop ? 'Verifierad Verkstad' : 'Privat Bilägare'}
         </p>
@@ -228,12 +231,6 @@ export default function ProfilePage() {
                         </a>
                       ) : <p className="text-lg opacity-40">Ej angivet</p>}
                     </div>
-                    {formData.description && (
-                      <div className="space-y-1.5 md:col-span-2">
-                        <Label className="text-[10px] opacity-50 uppercase font-bold tracking-wider">Om verkstaden</Label>
-                        <p className="text-sm leading-relaxed text-slate-300 italic">"{formData.description}"</p>
-                      </div>
-                    )}
                   </>
                 )}
               </div>
@@ -261,14 +258,6 @@ export default function ProfilePage() {
                       <Label className="text-xs font-bold uppercase opacity-60 ml-1">Webbplats</Label>
                       <Input value={formData.website} onChange={(e) => setFormData({...formData, website: e.target.value})} className="h-12 bg-white/5 rounded-xl border-white/10" placeholder="www.verkstad.se" />
                     </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label className="text-xs font-bold uppercase opacity-60 ml-1">Gatuadress</Label>
-                      <Input value={formData.address} onChange={(e) => setFormData({...formData, address: e.target.value})} className="h-12 bg-white/5 rounded-xl border-white/10" placeholder="Gatan 1, 123 45 Stad" />
-                    </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label className="text-xs font-bold uppercase opacity-60 ml-1">Beskrivning / Om oss</Label>
-                      <Textarea value={formData.description} onChange={(e) => setFormData({...formData, description: e.target.value})} className="bg-white/5 rounded-xl border-white/10 min-h-[100px]" placeholder="Berätta kort om er verkstad..." />
-                    </div>
                   </>
                 )}
               </div>
@@ -277,7 +266,7 @@ export default function ProfilePage() {
                 <Button onClick={handleSave} disabled={loading} className="flex-1 h-14 rounded-2xl font-bold bg-primary text-white shadow-lg">
                   {loading ? <Loader2 className="animate-spin" /> : 'Spara ändringar'}
                 </Button>
-                <Button variant="ghost" onClick={() => setIsEditing(false)} className="flex-1 h-14 rounded-2xl border border-white/10">Avbryt</Button>
+                <Button variant="ghost" type="button" onClick={() => setIsEditing(false)} className="flex-1 h-14 rounded-2xl border border-white/10">Avbryt</Button>
               </div>
             </div>
           )}

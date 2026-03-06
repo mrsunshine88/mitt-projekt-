@@ -8,21 +8,22 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useUser, useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection } from 'firebase/firestore';
 import Link from 'next/link';
 import Image from 'next/image';
-import { Vehicle, VehicleLog } from '@/types/autolog';
+import { Vehicle } from '@/types/autolog';
 import { SWEDISH_CAR_BRANDS } from '@/constants/car-brands';
 import { useRouter } from 'next/navigation';
-import { TRUST_CONFIG, calculateOverallTrust } from '@/components/history-list';
+import { TRUST_CONFIG } from '@/components/history-list';
+import { firebaseConfig } from '@/firebase/config';
 
 export default function BrowseMarketplace() {
   const db = useFirestore();
   const { user, isUserLoading } = useUser();
   const router = useRouter();
+  const appId = firebaseConfig.projectId;
   
-  // States för filter
   const [search, setSearch] = useState('');
   const [brandFilter, setBrandFilter] = useState('all');
   const [fuelFilter, setFuelFilter] = useState('all');
@@ -34,8 +35,6 @@ export default function BrowseMarketplace() {
   const [colorFilter, setColorFilter] = useState('');
   
   const [showFilters, setShowFilters] = useState(false);
-
-  const appId = "studio-3405255876-f647c";
 
   useEffect(() => {
     if (!isUserLoading && !user) {
@@ -83,7 +82,7 @@ export default function BrowseMarketplace() {
       <header className="mb-8 space-y-6">
         <div>
           <h1 className="text-4xl font-headline font-bold">Marknadsplats</h1>
-          <p className="text-muted-foreground">Utforska bilar med CarGuard-verifierad historik</p>
+          <p className="text-muted-foreground">Utforska bilar med AutoLog-verifierad historik</p>
         </div>
         <div className="flex flex-col gap-4">
           <div className="flex flex-col md:flex-row gap-4">
@@ -111,7 +110,7 @@ export default function BrowseMarketplace() {
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold uppercase opacity-60 ml-1">CarGuard Status</label>
+                  <label className="text-[10px] font-bold uppercase opacity-60 ml-1">Tillit Status</label>
                   <Select value={trustFilter} onValueChange={setTrustFilter}>
                     <SelectTrigger className="bg-white/5 border-white/10 h-12 rounded-xl"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -212,16 +211,23 @@ export default function BrowseMarketplace() {
 }
 
 function VehicleListItem({ vehicle }: { vehicle: Vehicle }) {
-  // LOGIK FÖR BILDISOLERING: Prioritera annonsbilden
-  const displayImage = vehicle.adMainImage || vehicle.mainImage || 'https://picsum.photos/seed/car/600/400';
+  const displayImage = vehicle.adMainImage || vehicle.mainImage || 'https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?auto=format&fit=crop&q=80&w=800';
   
-  const trust = TRUST_CONFIG[vehicle.overallTrust as keyof typeof TRUST_CONFIG] || TRUST_CONFIG.Bronze;
+  const trustKey = vehicle.overallTrust || 'Bronze';
+  const trust = TRUST_CONFIG[trustKey as keyof typeof TRUST_CONFIG] || TRUST_CONFIG.Bronze;
+
+  const vehicleName = `${vehicle.make || 'Bil'} ${vehicle.model || ''}`.trim();
 
   return (
     <Link href={`/v/${vehicle.id}`}>
       <Card className="glass-card border-none overflow-hidden group hover:ring-2 transition-all ring-primary/20 shadow-2xl h-full flex flex-col">
         <div className="aspect-[4/3] relative">
-          <Image src={displayImage} alt={vehicle.make} fill className="object-cover transition-transform duration-500 group-hover:scale-105" />
+          <Image 
+            src={displayImage} 
+            alt={vehicleName || 'Bilannons'} 
+            fill 
+            className="object-cover transition-transform duration-500 group-hover:scale-105" 
+          />
           <div className="absolute top-4 left-4 flex flex-col gap-2">
             <Badge className="bg-green-500 text-white border-none shadow-xl px-3 py-1 font-black text-[9px] uppercase">
               <ShieldCheck className="w-3 h-3 mr-1.5" /> Verifierad
@@ -234,14 +240,14 @@ function VehicleListItem({ vehicle }: { vehicle: Vehicle }) {
         <CardContent className="p-5 space-y-4 flex-1 flex flex-col">
           <div className="flex justify-between items-start">
             <div>
-              <h3 className="text-xl font-headline font-bold group-hover:text-primary transition-colors">{vehicle.make} {vehicle.model}</h3>
+              <h3 className="text-xl font-headline font-bold group-hover:text-primary transition-colors">{vehicleName}</h3>
               <div className="flex items-center gap-3 mt-1 text-[10px] uppercase font-bold text-muted-foreground tracking-widest">
-                <span className="flex items-center gap-1.5"><Calendar className="w-3 h-3" /> {vehicle.year}</span>
-                <span className="flex items-center gap-1.5"><Gauge className="w-3 h-3" /> {vehicle.currentOdometerReading?.toLocaleString()} mil</span>
+                <span className="flex items-center gap-1.5"><Calendar className="w-3 h-3" /> {vehicle.year || '---'}</span>
+                <span className="flex items-center gap-1.5"><Gauge className="w-3 h-3" /> {vehicle.currentOdometerReading?.toLocaleString() || '0'} mil</span>
               </div>
             </div>
             <div className="text-right">
-              <p className="text-xl font-headline font-black text-white whitespace-nowrap">{vehicle.price?.toLocaleString()} kr</p>
+              <p className="text-xl font-headline font-black text-white whitespace-nowrap">{vehicle.price?.toLocaleString() || '---'} kr</p>
             </div>
           </div>
           
@@ -255,7 +261,7 @@ function VehicleListItem({ vehicle }: { vehicle: Vehicle }) {
           </div>
 
           <div className="flex justify-between items-center pt-4 mt-auto border-t border-white/5">
-            <Badge variant="outline" className="bg-white text-black font-bold uppercase border-none px-3 py-1 text-[11px] font-mono shadow-md">{vehicle.licensePlate}</Badge>
+            <Badge variant="outline" className="bg-white text-black font-bold uppercase border-none px-3 py-1 text-[11px] font-mono shadow-md">{vehicle.licensePlate || '---'}</Badge>
             <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
           </div>
         </CardContent>

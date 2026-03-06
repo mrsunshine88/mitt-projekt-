@@ -2,13 +2,13 @@
 "use client";
 
 import { use, useState, useMemo, useEffect } from 'react';
-import { ShieldCheck, Gauge, Calendar, ArrowLeft, MessageCircle, Phone, Loader2, History, Shield, FileText, Zap, Palette, Share2, Award, Check, AlertCircle, Maximize2 } from 'lucide-react';
+import { ShieldCheck, Gauge, Calendar, ArrowLeft, MessageCircle, Phone, Loader2, History, FileText, Share2, Award, Check, AlertCircle, Maximize2, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { HistoryList, calculateOverallTrust, TRUST_CONFIG } from '@/components/history-list';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from '@/components/ui/carousel';
-import { useUser, useFirestore, useCollection, useMemoFirebase, useDoc } from '@/firebase';
+import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection, onSnapshot, query, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
 import { firebaseConfig } from '@/firebase/config';
 import { Vehicle, VehicleLog, TrustLevel, UserProfile } from '@/types/autolog';
@@ -22,6 +22,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 
 export default function PublicVehicleAdView({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -47,6 +48,13 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
     return () => unsub();
   }, [db, plate, appId]);
 
+  // Hämta säljarens profil dynamiskt för att få med bild och användartyp
+  const sellerProfileRef = useMemoFirebase(() => {
+    if (!db || !vehicle?.ownerId) return null;
+    return doc(db, 'artifacts', appId, 'public', 'data', 'public_profiles', vehicle.ownerId);
+  }, [db, vehicle?.ownerId, appId]);
+  const { data: sellerProfile } = useDoc<UserProfile>(sellerProfileRef);
+
   const userProfileRef = useMemoFirebase(() => {
     if (!db || !user?.uid) return null;
     return doc(db, 'artifacts', appId, 'public', 'data', 'public_profiles', user.uid);
@@ -71,20 +79,17 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
   const trustInfo = TRUST_CONFIG[overallTrust];
 
   const isOwner = user?.uid === vehicle?.ownerId;
+  const displaySellerName = sellerProfile?.name || vehicle?.ownerName || 'Verifierad medlem';
+  const isWorkshopSeller = sellerProfile?.userType === 'Workshop';
 
-  // LOGIK FÖR BILDISOLERING:
-  // Vi prioriterar adImageUrls framför de vanliga imageUrls.
   const images = useMemo(() => {
-    if (vehicle?.adImageUrls && vehicle.adImageUrls.length > 0) {
-      return vehicle.adImageUrls;
-    }
-    if (vehicle?.adMainImage) {
-      return [vehicle.adMainImage];
-    }
-    if (vehicle?.imageUrls && vehicle.imageUrls.length > 0) {
-      return vehicle.imageUrls;
-    }
-    return [vehicle?.mainImage || "https://picsum.photos/seed/car/800/600"];
+    const adImages = (vehicle?.adImageUrls || []).filter(url => !!url && typeof url === 'string');
+    if (adImages.length > 0) return adImages;
+    if (vehicle?.adMainImage) return [vehicle.adMainImage];
+    const profileImages = (vehicle?.imageUrls || []).filter(url => !!url && typeof url === 'string');
+    if (profileImages.length > 0) return profileImages;
+    if (vehicle?.mainImage) return [vehicle.mainImage];
+    return ["https://picsum.photos/seed/car/800/600"];
   }, [vehicle]);
 
   const handleContactSeller = async () => {
@@ -103,7 +108,8 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
         convosRef,
         where('carId', '==', plate),
         where('buyerId', '==', user.uid),
-        where('sellerId', '==', vehicle.ownerId)
+        where('sellerId', '==', vehicle.ownerId),
+        where('type', '==', 'MARKETPLACE')
       );
       
       const snap = await getDocs(q);
@@ -114,16 +120,16 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
       }
 
       const carTitle = `${vehicle.make} ${vehicle.model}`;
-      // Använd annonsbilden i chatten om den finns
       const carImageUrl = vehicle.adMainImage || vehicle.mainImage || 'https://picsum.photos/seed/car/200/200';
 
       const newConvo = await addDoc(convosRef, {
         participants: [user.uid, vehicle.ownerId],
         buyerId: user.uid,
         sellerId: vehicle.ownerId,
+        type: 'MARKETPLACE',
         participantNames: {
           [user.uid]: currentUserProfile?.name || user.displayName || 'Köpare',
-          [vehicle.ownerId]: vehicle.ownerName || 'Säljare'
+          [vehicle.ownerId]: sellerProfile?.name || vehicle.ownerName || 'Säljare'
         },
         carId: plate,
         carTitle: carTitle,
@@ -132,7 +138,7 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
         lastMessageAt: serverTimestamp(),
         lastMessageSenderId: '',
         unreadBy: [],
-        hiddenFor: [],
+        hiddenFrom: [],
         updatedAt: serverTimestamp(),
         transferCode: Math.floor(100000 + Math.random() * 900000).toString()
       });
@@ -169,7 +175,6 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
         
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
           <div className="lg:col-span-2 space-y-10">
-            {/* Bildspel med förstoring */}
             <div className="relative rounded-[2.5rem] overflow-hidden glass-card border-none shadow-2xl">
               <Carousel>
                 <CarouselContent>
@@ -209,12 +214,11 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
               </div>
             </div>
             
-            {/* Header & Pris */}
             <div className="space-y-8">
               <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 px-4">
                 <div className="space-y-4">
                   <div className="inline-block bg-primary text-white font-black px-6 py-2 rounded-2xl text-2xl shadow-xl shadow-primary/20 mb-2">
-                    {vehicle.price ? `${vehicle.price.toLocaleString()} kr` : 'Pris ej angivet'}
+                    {vehicle.price ? `${vehicle.price.toLocaleString()} kr` : 'Ring för pris'}
                   </div>
                   <h1 className="text-5xl md:text-7xl font-headline font-bold text-white tracking-tighter">
                     {vehicle.make} <span className="gradient-text">{vehicle.model}</span>
@@ -231,7 +235,6 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
                 </div>
               </div>
 
-              {/* Tillitsprofil Sektion */}
               <Card className={`mx-4 p-8 rounded-[2rem] border-2 ${trustInfo.border} ${trustInfo.bg} flex flex-col md:flex-row items-center gap-8 shadow-2xl`}>
                 <div className="text-7xl">{trustInfo.emoji}</div>
                 <div className="text-center md:text-left flex-1 space-y-2">
@@ -246,7 +249,6 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
                 </div>
               </Card>
 
-              {/* Tekniska Data */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 px-2">
                 <Card className="bg-white/5 border-white/5 p-5 rounded-[2rem]">
                   <p className="text-[10px] font-bold uppercase opacity-40 mb-1">Växellåda</p>
@@ -266,7 +268,6 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
                 </Card>
               </div>
 
-              {/* Säljarens Beskrivning */}
               <div className="px-4 py-6 space-y-4">
                 <h3 className="text-2xl font-bold flex items-center gap-2"><FileText className="w-6 h-6 text-primary" /> Säljarens beskrivning</h3>
                 <p className="text-slate-300 text-lg leading-relaxed whitespace-pre-wrap italic">
@@ -274,7 +275,6 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
                 </p>
               </div>
 
-              {/* Historik */}
               <div className="space-y-8 pt-4">
                 <div className="flex items-center justify-between px-4">
                   <h2 className="text-3xl font-headline font-bold flex items-center gap-4 text-white"><History className="text-primary w-8 h-8" /> Komplett historik</h2>
@@ -287,7 +287,6 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
             </div>
           </div>
           
-          {/* Kontaktpanel */}
           <div className="space-y-8">
             <Card className="glass-card sticky top-24 border-white/5 rounded-[3rem] p-10 space-y-6 shadow-2xl">
               <div className="space-y-4">
@@ -323,9 +322,25 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
                 </div>
               )}
 
-              <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-                <p className="text-[10px] font-bold uppercase opacity-40 text-center mb-2">Säljs av</p>
-                <p className="font-bold text-center text-lg">{vehicle.ownerName || 'Verifierad medlem'}</p>
+              <div className="p-6 bg-white/5 rounded-2xl border border-white/5 flex flex-col items-center gap-4">
+                <p className="text-[10px] font-bold uppercase opacity-40 text-center">Säljs av</p>
+                <div className="relative">
+                  <Avatar className={`h-24 w-24 ${isWorkshopSeller ? 'rounded-[1.5rem]' : 'rounded-full'} border-4 border-background shadow-xl`}>
+                    <AvatarImage src={sellerProfile?.photoUrl} className="object-cover" />
+                    <AvatarFallback className={`${isWorkshopSeller ? 'rounded-[1.5rem]' : 'rounded-full'} bg-primary/10 text-primary text-2xl font-black`}>
+                      {displaySellerName[0]?.toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  {isWorkshopSeller && (
+                    <div className="absolute -bottom-2 -right-2 bg-blue-600 text-white rounded-lg p-1.5 border-4 border-background shadow-lg">
+                      <Wrench className="w-4 h-4" />
+                    </div>
+                  )}
+                </div>
+                <div className="text-center">
+                  <p className="font-black text-lg">{displaySellerName}</p>
+                  {isWorkshopSeller && <Badge className="mt-1 bg-blue-500/10 text-blue-400 border-none uppercase text-[8px] font-black">Verifierad Verkstad</Badge>}
+                </div>
               </div>
             </Card>
           </div>

@@ -24,12 +24,28 @@ export interface VehicleLog {
   photoUrl?: string;
   creatorName?: string;
   creatorId?: string;
+  ownerId?: string | null;
   type?: LogType;
   approvalStatus?: ApprovalStatus;
   createdAt: any;
+  updatedAt: any;
   trustLevel?: TrustLevel;
   licensePlate: string;
   hasStoragePhoto?: boolean;
+}
+
+export interface WorkshopNotification {
+  id: string;
+  workshopId: string;
+  type: 'approval' | 'rejection';
+  status: 'approved' | 'rejected';
+  plate: string;
+  vehicleTitle: string;
+  ownerName: string;
+  ownerId: string;
+  createdAt: any;
+  read: boolean;
+  logData?: Partial<VehicleLog>;
 }
 
 export interface Vehicle {
@@ -49,8 +65,8 @@ export interface Vehicle {
   description?: string;
   mainImage?: string; 
   imageUrls?: string[];
-  adMainImage?: string; // Unik annonsbild som inte rör profilbilden
-  adImageUrls?: string[]; // Unika annonsbilder
+  adMainImage?: string; 
+  adImageUrls?: string[]; 
   publicShareId?: string;
   isPublished?: boolean;
   status?: VehicleStatus;
@@ -92,11 +108,13 @@ export interface Conversation {
   carId: string;
   carTitle: string;
   carImageUrl: string;
+  type?: 'MARKETPLACE' | 'SERVICE' | 'SUPPORT';
   lastMessage: string;
   lastMessageAt: any;
   lastMessageSenderId: string;
   unreadBy: string[];
-  hiddenFor?: string[];
+  hiddenFrom?: string[]; 
+  deletedAt?: Record<string, any>;
   updatedAt: any;
   transferCode?: string; 
 }

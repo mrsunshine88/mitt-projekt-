@@ -2,7 +2,7 @@
 "use client";
 
 import { use, useState, useMemo, useEffect } from 'react';
-import { ShieldCheck, Gauge, Calendar, ArrowLeft, Loader2, History, FileText, Trash2, Zap, Palette, Wrench, KeyRound, Settings2, XCircle, Award, Share2, Check, Maximize2, AlertTriangle } from 'lucide-react';
+import { ShieldCheck, Gauge, Calendar, ArrowLeft, Loader2, History as HistoryIcon, FileText, Trash2, Zap, Palette, Wrench, KeyRound, Settings2, XCircle, Award, Share2, Check, Maximize2, AlertTriangle, Undo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { HistoryList, calculateOverallTrust, TRUST_CONFIG } from '@/components/history-list';
 import { Badge } from '@/components/ui/badge';
@@ -57,6 +57,7 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
   const [isTransferOpen, setIsTransferOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isCancellingTransfer, setIsCancellingTransfer] = useState(false);
   const [copied, setCopied] = useState(false);
   const [hardDeleteConfirm, setHardDeleteConfirm] = useState('');
   const [isHardDeleting, setIsHardDeleting] = useState(false);
@@ -123,22 +124,51 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
     try {
       const batch = writeBatch(db);
       batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'public_listings', plate));
-      batch.update(doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate), { isPublished: false, updatedAt: serverTimestamp() });
+      batch.update(doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate), { 
+        isPublished: false, 
+        adMainImage: null,
+        adImageUrls: null,
+        price: null,
+        description: null,
+        updatedAt: serverTimestamp() 
+      });
+      batch.update(doc(db, 'artifacts', appId, 'users', user.uid, 'vehicles', plate), {
+        isPublished: false,
+        adMainImage: null,
+        adImageUrls: null,
+        price: null,
+        description: null,
+        updatedAt: serverTimestamp()
+      });
       await batch.commit();
-      toast({ title: "Annons borttagen" });
+      toast({ title: "Annons borttagen och data rensad." });
     } catch (err: any) { toast({ variant: "destructive", title: "Fel", description: err.message }); }
   };
 
-  const handleResetTransfer = async () => {
-    if (!db || !vehicle) return;
+  const handleCancelOutgoingTransfer = async () => {
+    if (!user || !db || !vehicle) return;
+    setIsCancellingTransfer(true);
     try {
-      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate), { 
-        pendingTransferTo: null, 
-        pendingTransferFrom: null, 
-        updatedAt: serverTimestamp() 
+      const batch = writeBatch(db);
+      
+      batch.update(doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate), {
+        pendingTransferTo: null,
+        pendingTransferFrom: null,
+        updatedAt: serverTimestamp()
       });
-      toast({ title: "Överlåtelse nollställd" });
-    } catch (err: any) { toast({ variant: "destructive", title: "Fel", description: err.message }); }
+
+      batch.update(doc(db, 'artifacts', appId, 'users', user.uid, 'vehicles', plate), {
+        pendingTransferTo: null,
+        updatedAt: serverTimestamp()
+      });
+
+      await batch.commit();
+      toast({ title: "Överlåtelse avbruten", description: "Bilen är inte längre föreslagen till köparen." });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Fel", description: err.message });
+    } finally {
+      setIsCancellingTransfer(false);
+    }
   };
 
   const handleLogSubmit = async (newLog: Partial<VehicleLog>) => {
@@ -151,6 +181,7 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
         licensePlate: plate, 
         creatorId: user.uid, 
         creatorName: user.displayName || 'Ägare', 
+        ownerId: vehicle.ownerId, 
         approvalStatus: 'approved',
         updatedAt: serverTimestamp()
       };
@@ -162,7 +193,6 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
       }
       
       const vehicleUpdates: any = { updatedAt: serverTimestamp() };
-      
       if (newLog.odometer && newLog.odometer > vehicle.currentOdometerReading) {
         vehicleUpdates.currentOdometerReading = newLog.odometer;
         if (newLog.category === 'Besiktning') {
@@ -190,6 +220,25 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
         updatedAt: serverTimestamp() 
       });
       batch.delete(notificationRef);
+
+      if (log.creatorId) {
+        const workshopNotifRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'workshop_notifications'));
+        batch.set(workshopNotifRef, {
+          workshopId: log.creatorId,
+          type: 'approval',
+          status: 'approved',
+          plate: plate,
+          vehicleTitle: `${vehicle.make} ${vehicle.model}`,
+          ownerName: user.displayName || 'Ägare',
+          ownerId: user.uid,
+          createdAt: serverTimestamp(),
+          read: false,
+          logData: {
+            ...log,
+            approvalStatus: 'approved'
+          }
+        });
+      }
       
       await batch.commit();
       toast({ title: "Service godkänd!", description: "Historiken är nu verifierad." });
@@ -206,14 +255,23 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
       batch.delete(logRef);
       batch.delete(notificationRef);
 
-      const logsQuery = query(
-        collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs'),
-        where('creatorId', '==', log.creatorId)
-      );
-      const snap = await getDocs(logsQuery);
-      if (snap.size <= 1) {
-        const customerRef = doc(db, 'artifacts', appId, 'public', 'data', 'workshops', log.creatorId!, 'servicedCars', plate);
-        batch.delete(customerRef);
+      if (log.creatorId) {
+        const workshopNotifRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'workshop_notifications'));
+        batch.set(workshopNotifRef, {
+          workshopId: log.creatorId,
+          type: 'rejection',
+          status: 'rejected',
+          plate: plate,
+          vehicleTitle: `${vehicle.make} ${vehicle.model}`,
+          ownerName: user.displayName || 'Ägare',
+          ownerId: user.uid,
+          createdAt: serverTimestamp(),
+          read: false,
+          logData: {
+            ...log,
+            approvalStatus: 'rejected'
+          }
+        });
       }
       
       await batch.commit();
@@ -224,9 +282,49 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
   const handleDeleteLog = async (log: VehicleLog) => {
     if (!db || !user || !vehicle) return;
     try {
-      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs', log.id));
+      const batch = writeBatch(db);
+      
+      // 1. Radera själva loggen
+      batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs', log.id));
+      
+      // 2. STÄDNING: Radera väntande godkännanden (notiser för ägare)
+      if (log.creatorId) {
+        batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'pending_approvals', `${plate}_${log.creatorId}`));
+      }
+      
+      // 3. STÄDNING: Hitta och radera alla verkstadsnotiser (svar) kopplade till denna specifika logg
+      const notifsRef = collection(db, 'artifacts', appId, 'public', 'data', 'workshop_notifications');
+      const qNotifs = query(notifsRef, where('plate', '==', plate));
+      const notifsSnap = await getDocs(qNotifs);
+      
+      notifsSnap.forEach(d => {
+        const data = d.data();
+        // Om notisen innehåller log-id:t i sin logData, ta bort den
+        if (data.logData?.id === log.id) {
+          batch.delete(d.ref);
+        }
+      });
+
+      // 4. KUNDLISTA-STÄDNING: Om detta var den sista loggen från denna skapare på denna bil, 
+      // ta bort bilen från verkstadens register.
+      if (log.creatorId) {
+        const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs');
+        const qLogs = query(logsRef, where('creatorId', '==', log.creatorId));
+        const logsSnap = await getDocs(qLogs);
+        
+        // Kontrollera om det finns några andra loggar kvar från samma skapare
+        const remainingLogs = logsSnap.docs.filter(d => d.id !== log.id);
+        if (remainingLogs.length === 0) {
+          batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'workshops', log.creatorId, 'servicedCars', plate));
+        }
+      }
+      
+      await batch.commit();
       toast({ title: "Historikpost raderad" });
-    } catch (e: any) { toast({ variant: "destructive", title: "Fel", description: e.message }); }
+    } catch (e: any) { 
+      console.error("Delete log error:", e);
+      toast({ variant: "destructive", title: "Kunde inte radera", description: e.message }); 
+    }
   };
 
   const handleDeleteFromGarage = async () => {
@@ -234,19 +332,18 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
     setIsDeleting(true);
     try {
       const batch = writeBatch(db);
-      
       batch.update(doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate), { 
         ownerId: null, 
         isPublished: false, 
         updatedAt: serverTimestamp(),
         mainImage: null,
         imageUrls: [],
-        description: "",
+        adMainImage: null,
+        adImageUrls: null,
+        description: null,
         price: null
       });
-      
       batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'public_listings', plate));
-      
       await batch.commit();
       toast({ title: "Borttagen från garaget och bilderna rensade." });
       router.push('/dashboard');
@@ -259,18 +356,19 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
     setIsHardDeleting(true);
     try {
       const batch = writeBatch(db);
-
-      // 1. Radera bilen
+      
       batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate));
-
-      // 2. Radera annonsen
       batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'public_listings', plate));
-
-      // 3. Radera historik
+      
       const logsSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs'));
       logsSnap.forEach(l => batch.delete(l.ref));
+      
+      const approvalsSnap = await getDocs(query(collection(db, 'artifacts', appId, 'public', 'data', 'pending_approvals'), where('plate', '==', plate)));
+      approvalsSnap.forEach(a => batch.delete(a.ref));
+      
+      const workshopNotifsSnap = await getDocs(query(collection(db, 'artifacts', appId, 'public', 'data', 'workshop_notifications'), where('plate', '==', plate)));
+      workshopNotifsSnap.forEach(wn => batch.delete(wn.ref));
 
-      // 4. Radera konversationer
       const convosQ = query(collection(db, 'artifacts', appId, 'public', 'data', 'conversations'), where('carId', '==', plate));
       const convosSnap = await getDocs(convosQ);
       for (const convo of convosSnap.docs) {
@@ -278,21 +376,18 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
         msgsSnap.forEach(m => batch.delete(m.ref));
         batch.delete(convo.ref);
       }
-
+      
       await batch.commit();
       toast({ title: "Fordon och all tillhörande data raderad permanent." });
       router.push('/admin');
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Fel vid hård radering", description: err.message });
-    } finally {
-      setIsHardDeleting(false);
-    }
+    } catch (err: any) { toast({ variant: "destructive", title: "Fel vid hård radering", description: err.message }); } 
+    finally { setIsHardDeleting(false); }
   };
 
   if (isVehicleLoading) return <div className="flex flex-col items-center justify-center min-h-screen"><Loader2 className="w-10 h-10 animate-spin text-primary" /></div>;
   if (!vehicle) return (
     <div className="container max-w-4xl mx-auto py-20 text-center space-y-6">
-      <h1 className="text-4xl font-headline font-bold">Fordonet hittades inte</h1>
+      <h1 className="text-4xl font-headline font-bold text-white">Fordonet hittades inte</h1>
       <p className="text-muted-foreground">Det kan ha raderats av en administratör eller ägare.</p>
       <Button asChild><Link href="/admin">Tillbaka till Admin</Link></Button>
     </div>
@@ -307,19 +402,9 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
           <button onClick={() => router.push(isAdminContext ? '/admin' : '/dashboard')} className="inline-flex items-center text-xs font-bold text-muted-foreground hover:text-white uppercase tracking-widest transition-colors">
             <ArrowLeft className="w-4 h-4 mr-2" /> {isAdminContext ? 'TILL ADMINPANEL' : 'TILL GARAGET'}
           </button>
-          
           <div className="flex items-center gap-3">
-            {isOwner && !isAdminContext && (
-              <Badge className="bg-primary/10 text-primary border-primary/20 px-4 py-1.5 rounded-full uppercase text-[10px] font-black tracking-widest">
-                DIN BIL
-              </Badge>
-            )}
-            
-            {isAdminContext && (
-              <Badge className="bg-accent text-black px-4 py-1.5 rounded-full uppercase text-[10px] font-black tracking-widest animate-pulse">
-                ADMIN-LÄGE
-              </Badge>
-            )}
+            {isOwner && !isAdminContext && <Badge className="bg-primary/10 text-primary border-primary/20 px-4 py-1.5 rounded-full uppercase text-[10px] font-black tracking-widest">DIN BIL</Badge>}
+            {isAdminContext && <Badge className="bg-accent text-black px-4 py-1.5 rounded-full uppercase text-[10px] font-black tracking-widest animate-pulse">ADMIN-LÄGE</Badge>}
           </div>
         </div>
         
@@ -335,18 +420,12 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
                           <div className="relative aspect-[16/10] cursor-zoom-in group">
                             <img src={url} alt="" className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
                             <div className="absolute inset-0 bg-gradient-to-t from-background/80 via-transparent to-transparent" />
-                            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20">
-                              <Maximize2 className="w-10 h-10 text-white" />
-                            </div>
+                            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20"><Maximize2 className="w-10 h-10 text-white" /></div>
                           </div>
                         </DialogTrigger>
                         <DialogContent className="max-w-[95vw] max-h-[95vh] p-0 bg-black/90 border-none rounded-none overflow-hidden">
-                          <DialogHeader className="sr-only">
-                            <DialogTitle>Bildförstoring</DialogTitle>
-                          </DialogHeader>
-                          <div className="relative w-full h-full flex items-center justify-center p-4">
-                            <img src={url} alt="Fullskärmsbild" className="max-w-full max-h-[90vh] object-contain" />
-                          </div>
+                          <DialogHeader className="sr-only"><DialogTitle>Bildförstoring</DialogTitle></DialogHeader>
+                          <div className="relative w-full h-full flex items-center justify-center p-4"><img src={url} alt="Fullskärmsbild" className="max-w-full max-h-[90vh] object-contain" /></div>
                         </DialogContent>
                       </Dialog>
                     </CarouselItem>
@@ -372,44 +451,23 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
                     <span className="flex items-center gap-2.5 font-bold text-sm text-slate-300"><Gauge className="w-5 h-5 text-accent" /> {vehicle.currentOdometerReading?.toLocaleString()} mil</span>
                   </div>
                 </div>
-                <div className="text-right">
-                  <div className="bg-white text-black font-bold px-8 py-2.5 rounded-2xl text-3xl font-mono shadow-2xl border-2 border-slate-300">
-                    {vehicle.licensePlate}
-                  </div>
-                </div>
+                <div className="text-right"><div className="bg-white text-black font-bold px-8 py-2.5 rounded-2xl text-3xl font-mono shadow-2xl border-2 border-slate-300">{vehicle.licensePlate}</div></div>
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4 px-2">
                 <Card className={`col-span-2 md:col-span-1 ${trustInfo.bg} ${trustInfo.border} border p-5 rounded-[2rem] flex items-center gap-4`}>
                   <div className="text-3xl">{trustInfo.emoji}</div>
-                  <div>
-                    <p className="text-[10px] font-bold uppercase opacity-60 mb-0.5">CarGuard Profil</p>
-                    <p className={`font-black uppercase tracking-tight ${trustInfo.color}`}>{trustInfo.label}</p>
-                  </div>
+                  <div><p className="text-[10px] font-bold uppercase opacity-60 mb-0.5">CarGuard Profil</p><p className={`font-black uppercase tracking-tight ${trustInfo.color}`}>{trustInfo.label}</p></div>
                 </Card>
-                <Card className="bg-white/5 border-white/5 p-5 rounded-[2rem]">
-                  <p className="text-[10px] font-bold uppercase opacity-40 mb-1">Växellåda</p>
-                  <p className="font-bold text-white">{vehicle.gearbox || 'Automat'}</p>
-                </Card>
-                <Card className="bg-white/5 border-white/5 p-5 rounded-[2rem]">
-                  <p className="text-[10px] font-bold uppercase opacity-40 mb-1">Bränsle</p>
-                  <p className="font-bold text-white">{vehicle.fuelType || 'Bensin'}</p>
-                </Card>
-                <Card className="bg-white/5 border-white/5 p-5 rounded-[2rem]">
-                  <p className="text-[10px] font-bold uppercase opacity-40 mb-1">Effekt</p>
-                  <p className="font-bold text-white">{vehicle.hp ? `${vehicle.hp} hk` : '---'}</p>
-                </Card>
-                <Card className="bg-white/5 border-white/5 p-5 rounded-[2rem]">
-                  <p className="text-[10px] font-bold uppercase opacity-40 mb-1">Färg</p>
-                  <p className="font-bold text-white">{vehicle.color || '---'}</p>
-                </Card>
+                <Card className="bg-white/5 border-white/5 p-5 rounded-[2rem]"><p className="text-[10px] font-bold uppercase opacity-40 mb-1">Växellåda</p><p className="font-bold text-white">{vehicle.gearbox || 'Automat'}</p></Card>
+                <Card className="bg-white/5 border-white/5 p-5 rounded-[2rem]"><p className="text-[10px] font-bold uppercase opacity-40 mb-1">Bränsle</p><p className="font-bold text-white">{vehicle.fuelType || 'Bensin'}</p></Card>
+                <Card className="bg-white/5 border-white/5 p-5 rounded-[2rem]"><p className="text-[10px] font-bold uppercase opacity-40 mb-1">Effekt</p><p className="font-bold text-white">{vehicle.hp ? `${vehicle.hp} hk` : '---'}</p></Card>
+                <Card className="bg-white/5 border-white/5 p-5 rounded-[2rem]"><p className="text-[10px] font-bold uppercase opacity-40 mb-1">Färg</p><p className="font-bold text-white">{vehicle.color || '---'}</p></Card>
               </div>
 
               <div className="space-y-8 pt-4">
                 <div className="flex items-center justify-between px-4">
-                  <h2 className="text-3xl font-headline font-bold flex items-center gap-4 text-white">
-                    <History className="text-primary w-8 h-8" /> Händelselogg
-                  </h2>
+                  <h2 className="text-3xl font-headline font-bold flex items-center gap-4 text-white"><HistoryIcon className="text-primary w-8 h-8" /> Händelselogg</h2>
                 </div>
                 <HistoryList 
                   logs={sortedLogs} 
@@ -426,77 +484,38 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
           <div className="space-y-8">
             <Card className="glass-card sticky top-24 border-white/5 rounded-[3rem] shadow-2xl overflow-hidden p-10 space-y-6">
               <div className="p-4 bg-primary/10 rounded-2xl border border-primary/20 text-center">
-                <p className="text-xs font-black text-primary uppercase tracking-widest flex items-center justify-center gap-2">
-                  <Award className="w-3 h-3" /> KONTROLLCENTER
-                </p>
+                <p className="text-xs font-black text-primary uppercase tracking-widest flex items-center justify-center gap-2"><Award className="w-3 h-3" /> KONTROLLCENTER</p>
               </div>
               <div className="grid gap-3">
-                <Button className="w-full h-14 rounded-2xl font-bold" onClick={() => { setEditingLog(null); setIsLogOpen(true); }}>
-                  <Wrench className="mr-2 w-5 h-5" /> Logga Service
-                </Button>
-                
-                {/* Endast admin ser redigera info knappen i admin-läge, eller ägaren i vanligt läge */}
+                <Button className="w-full h-14 rounded-2xl font-bold" onClick={() => { setEditingLog(null); setIsLogOpen(true); }}><Wrench className="mr-2 w-5 h-5" /> Logga Service</Button>
                 {(isOwner || (isAdminContext && isHuvudAdmin)) && (
-                  <Button variant="outline" className="w-full h-14 rounded-2xl font-bold" onClick={() => setIsEditInfoOpen(true)}>
-                    <Settings2 className="mr-2 w-5 h-5" /> Redigera Info
-                  </Button>
+                  <Button variant="outline" className="w-full h-14 rounded-2xl font-bold" onClick={() => setIsEditInfoOpen(true)}><Settings2 className="mr-2 w-5 h-5" /> Redigera Info</Button>
                 )}
-                
                 <div className="h-px bg-white/5 my-2" />
-                
-                <Button variant="outline" className="w-full h-14 rounded-2xl font-bold border-primary/20 text-primary" onClick={handleCopyLink}>
-                  {copied ? <Check className="mr-2 w-5 h-5 text-green-500" /> : <Share2 className="mr-2 w-5 h-5" />} 
-                  Dela historik
-                </Button>
-                
-                <Button variant="outline" className="w-full h-14 rounded-2xl font-bold border-white/10" asChild>
-                  <Link href={`/v/${plate}/history`}>
-                    <History className="mr-2 w-5 h-5" /> Se all historik
-                  </Link>
-                </Button>
-
+                <Button variant="outline" className="w-full h-14 rounded-2xl font-bold border-primary/20 text-primary" onClick={handleCopyLink}>{copied ? <Check className="mr-2 w-5 h-5 text-green-500" /> : <Share2 className="mr-2 w-5 h-5" />} Dela historik</Button>
+                <Button variant="outline" className="w-full h-14 rounded-2xl font-bold border-white/10" asChild><Link href={`/v/${plate}/history`}><HistoryIcon className="mr-2 w-5 h-5" /> Se all historik</Link></Button>
                 {isAdminContext && isHuvudAdmin && (
                   <>
                     <div className="h-px bg-white/5 my-2" />
                     <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button variant="destructive" className="w-full h-14 rounded-2xl font-bold">
-                          <Trash2 className="mr-2 w-5 h-5" /> Hård radering
-                        </Button>
-                      </AlertDialogTrigger>
+                      <AlertDialogTrigger asChild><Button variant="destructive" className="w-full h-14 rounded-2xl font-bold"><Trash2 className="mr-2 w-5 h-5" /> Hård radering</Button></AlertDialogTrigger>
                       <AlertDialogContent className="glass-card border-white/10 rounded-[2.5rem] p-8">
                         <AlertDialogHeader>
-                          <AlertDialogTitle className="text-2xl font-headline text-destructive flex items-center gap-2">
-                            <AlertTriangle className="w-6 h-6" /> Permanent radering
-                          </AlertDialogTitle>
-                          <AlertDialogDescription className="text-slate-300">
-                            Du är i admin-läge. Denna åtgärd raderar fordonet, historiken, bilder och chattrådar permanent ur hela systemet. Detta kan inte ångras.
-                          </AlertDialogDescription>
+                          <AlertDialogTitle className="text-2xl font-headline text-destructive flex items-center gap-2"><AlertTriangle className="w-6 h-6" /> Permanent radering</AlertDialogTitle>
+                          <AlertDialogDescription className="text-slate-300">Du är i admin-läge. Denna åtgärd raderar fordonet, historiken, bilder och chattrådar permanent ur hela systemet. Detta kan inte ångras.</AlertDialogDescription>
                         </AlertDialogHeader>
                         <div className="py-6 space-y-3">
                           <Label className="text-xs uppercase font-bold opacity-60">Skriv RADERA för att bekräfta</Label>
-                          <Input 
-                            placeholder="RADERA" 
-                            value={hardDeleteConfirm} 
-                            onChange={(e) => setHardDeleteConfirm(e.target.value)} 
-                            className="h-14 text-center font-bold tracking-[0.3em] bg-white/5 border-destructive/20 focus:border-destructive" 
-                          />
+                          <Input placeholder="RADERA" value={hardDeleteConfirm} onChange={(e) => setHardDeleteConfirm(e.target.value)} className="h-14 text-center font-bold tracking-[0.3em] bg-white/5 border-destructive/20 focus:border-destructive" />
                         </div>
                         <AlertDialogFooter className="gap-3">
                           <AlertDialogCancel className="h-14 rounded-2xl" onClick={() => setHardDeleteConfirm('')}>Avbryt</AlertDialogCancel>
-                          <AlertDialogAction 
-                            onClick={handleAdminHardDelete} 
-                            disabled={hardDeleteConfirm !== 'RADERA' || isHardDeleting} 
-                            className="h-14 rounded-2xl bg-destructive"
-                          >
-                            {isHardDeleting ? <Loader2 className="animate-spin" /> : 'Bekräfta hård radering'}
-                          </AlertDialogAction>
+                          <AlertDialogAction onClick={handleAdminHardDelete} disabled={hardDeleteConfirm !== 'RADERA' || isHardDeleting} className="h-14 rounded-2xl bg-destructive">{isHardDeleting ? <Loader2 className="animate-spin" /> : 'Bekräfta hård radering'}</AlertDialogAction>
                         </AlertDialogFooter>
                       </AlertDialogContent>
                     </AlertDialog>
                   </>
                 )}
-
                 {isOwner && !isAdminContext && (
                   <>
                     <div className="h-px bg-white/5 my-2" />
@@ -504,15 +523,26 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
                       <>
                         <Button variant="outline" className="w-full h-14 rounded-2xl font-bold border-blue-500/20 text-blue-400" onClick={() => setIsEditAdOpen(true)}><Share2 className="mr-2 w-5 h-5" /> Ändra annons</Button>
                         <Button variant="destructive" className="w-full h-14 rounded-2xl font-bold" onClick={handleRemoveAd}><Trash2 className="mr-2 w-5 h-5" /> Ta bort annons</Button>
-                        <Button className={`w-full h-14 rounded-2xl font-bold ${!!vehicle.pendingTransferTo ? 'bg-orange-600' : 'bg-green-600'} text-white`} onClick={() => setIsTransferOpen(true)}>
-                          <KeyRound className="mr-2 w-5 h-5" /> {!!vehicle.pendingTransferTo ? 'Ändra köpare' : 'Överlåt bil'}
-                        </Button>
+                        
+                        <div className="grid gap-2">
+                          <Button className={`w-full h-14 rounded-2xl font-bold ${!!vehicle.pendingTransferTo ? 'bg-orange-600' : 'bg-green-600'} text-white`} onClick={() => setIsTransferOpen(true)}>
+                            <KeyRound className="mr-2 w-5 h-5" /> {!!vehicle.pendingTransferTo ? 'Ändra köpare' : 'Överlåt bil'}
+                          </Button>
+                          
+                          {!!vehicle.pendingTransferTo && (
+                            <Button 
+                              variant="ghost" 
+                              className="w-full h-12 rounded-2xl font-bold text-destructive hover:bg-destructive/5"
+                              onClick={handleCancelOutgoingTransfer}
+                              disabled={isCancellingTransfer}
+                            >
+                              {isCancellingTransfer ? <Loader2 className="animate-spin mr-2" /> : <Undo2 className="mr-2 w-4 h-4" />} Avbryt överlåtelse
+                            </Button>
+                          )}
+                        </div>
                       </>
                     ) : (
                       <Button className="w-full h-14 rounded-2xl font-bold bg-blue-600 hover:bg-blue-500" onClick={() => setIsEditAdOpen(true)}><Share2 className="mr-2 w-5 h-5" /> Sälj bil</Button>
-                    )}
-                    {vehicle.pendingTransferTo && (
-                      <Button variant="outline" className="w-full h-14 rounded-2xl font-bold border-orange-500/20 text-orange-500" onClick={handleResetTransfer}><XCircle className="mr-2 w-5 h-5" /> Nollställ överlåtelse</Button>
                     )}
                     <Button variant="ghost" className="w-full h-14 rounded-2xl font-bold text-destructive" onClick={() => setIsDeleteDialogOpen(true)}><Trash2 className="mr-2 w-5 h-5" /> Radera från garage</Button>
                   </>

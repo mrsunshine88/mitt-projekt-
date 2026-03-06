@@ -6,8 +6,8 @@ import { Toaster } from '@/components/ui/toaster';
 import { BanGuard } from '@/components/ban-guard';
 
 export const metadata: Metadata = {
-  title: 'AutoLog - Digital Servicebok',
-  description: 'Digitalisera din bils historik med säkra bildbevis och höj andrahandsvärdet.',
+  title: 'AutoLog – Din digitala annons och servicebok',
+  description: 'Den smarta lösningen som förenar verifierad servicehistorik med en modern marknadsplats.',
 };
 
 export const viewport: Viewport = {

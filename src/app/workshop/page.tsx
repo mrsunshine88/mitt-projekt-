@@ -1,27 +1,25 @@
 
 "use client";
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useUser, useFirestore, useMemoFirebase, useDoc, useCollection, useStorage } from '@/firebase';
-import { collection, doc, getDoc, getDocs, setDoc, deleteDoc, writeBatch, serverTimestamp, query, where, addDoc } from 'firebase/firestore';
-import { ref, uploadString } from 'firebase/storage';
+import { collection, doc, getDoc, getDocs, writeBatch, serverTimestamp, query, where, addDoc } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Search, Wrench, ShieldCheck, Loader2, Gauge, Calendar, RefreshCw, Edit3, Trash2, List, ArrowRight, MessageCircle } from 'lucide-react';
+import { Search, Wrench, ShieldCheck, Loader2, Gauge, Calendar, List, ArrowRight, MessageCircle, History as HistoryIcon } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { LogEventDialog } from '@/components/log-event-dialog';
-import { VehicleLog, UserProfile } from '@/types/autolog';
+import { VehicleLog, UserProfile, WorkshopNotification } from '@/types/autolog';
 import { firebaseConfig } from '@/firebase/config';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import Image from 'next/image';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 export default function WorkshopPage() {
   const { user, isUserLoading } = useUser();
   const db = useFirestore();
-  const storage = useStorage();
   const { toast } = useToast();
   const router = useRouter();
   const appId = firebaseConfig.projectId;
@@ -37,9 +35,19 @@ export default function WorkshopPage() {
 
   const userProfileRef = useMemoFirebase(() => {
     if (!db || !user) return null;
-    return doc(db, 'artifacts', appId, 'users', user.uid, 'profiles', 'user-profile');
+    return doc(db, 'artifacts', appId, 'public', 'data', 'public_profiles', user.uid);
   }, [db, user, appId]);
   const { data: profile } = useDoc<UserProfile>(userProfileRef);
+
+  const notifsQuery = useMemoFirebase(() => {
+    if (!db || !user) return null;
+    return query(
+      collection(db, 'artifacts', appId, 'public', 'data', 'workshop_notifications'),
+      where('workshopId', '==', user.uid),
+      where('read', '==', false)
+    );
+  }, [db, user, appId]);
+  const { data: unreadNotifications } = useCollection<WorkshopNotification>(notifsQuery);
 
   const fetchServicedCars = async () => {
     if (!db || !user) return;
@@ -63,21 +71,20 @@ export default function WorkshopPage() {
 
   const handleSearch = async (e?: React.FormEvent, plate?: string) => {
     if (e) e.preventDefault();
-    const targetPlate = plate || searchPlate;
+    const targetPlate = (plate || searchPlate).toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
     if (!db || !targetPlate) return;
     
     setLoading(true);
     setVehicle(null);
     try {
-      const cleanPlate = targetPlate.toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
-      const globalRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', cleanPlate);
+      const globalRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', targetPlate);
       const globalSnap = await getDoc(globalRef);
       if (globalSnap.exists()) {
-        setVehicle({ ...globalSnap.data(), id: cleanPlate, licensePlate: cleanPlate });
-        setSearchPlate(cleanPlate);
+        setVehicle({ ...globalSnap.data(), id: targetPlate, licensePlate: targetPlate });
+        setSearchPlate(targetPlate);
         setIsHistoryListOpen(false);
       } else {
-        toast({ variant: "destructive", title: "Fordon hittades ej", description: "Kontrollera registreringsnumret." });
+        toast({ variant: "destructive", title: "Fordon hittades ej" });
       }
     } catch (err) {
       toast({ variant: "destructive", title: "Sökfel" });
@@ -86,73 +93,70 @@ export default function WorkshopPage() {
 
   const handleContactOwner = async () => {
     if (!user || !db || !vehicle || !vehicle.ownerId) return;
-    
     setLoading(true);
     try {
       const convosRef = collection(db, 'artifacts', appId, 'public', 'data', 'conversations');
-      
       const q = query(
-        convosRef,
-        where('carId', '==', vehicle.id),
-        where('buyerId', '==', user.uid),
-        where('sellerId', '==', vehicle.ownerId)
+        convosRef, 
+        where('carId', '==', vehicle.id), 
+        where('participants', 'array-contains', user.uid)
       );
       
       const snap = await getDocs(q);
+      
+      const currentOwnerConvo = snap.docs.find(d => {
+        const data = d.data();
+        return data.participants.includes(vehicle.ownerId);
+      });
 
-      if (!snap.empty) {
-        router.push(`/inbox/${snap.docs[0].id}`);
+      if (currentOwnerConvo) {
+        router.push(`/inbox/${currentOwnerConvo.id}`);
         return;
       }
+
+      const carTitle = `${vehicle.make} ${vehicle.model}`;
+      const carImageUrl = vehicle.adMainImage || vehicle.mainImage || 'https://picsum.photos/seed/car/200/200';
 
       const newConvo = await addDoc(convosRef, {
         participants: [user.uid, vehicle.ownerId],
         buyerId: user.uid,
         sellerId: vehicle.ownerId,
-        participantNames: {
-          [user.uid]: profile?.name || 'Verkstad',
-          [vehicle.ownerId]: vehicle.ownerName || 'Bilägare'
+        type: 'SERVICE',
+        participantNames: { 
+          [user.uid]: profile?.name || 'Verkstad', 
+          [vehicle.ownerId]: vehicle.ownerName || 'Bilägare' 
         },
         carId: vehicle.id,
-        carTitle: `${vehicle.make} ${vehicle.model}`,
-        carImageUrl: vehicle.mainImage || 'https://picsum.photos/seed/car/200/200',
+        carTitle: carTitle,
+        carImageUrl: carImageUrl,
         lastMessage: '',
         lastMessageAt: serverTimestamp(),
         lastMessageSenderId: '',
         unreadBy: [],
-        hiddenFor: [],
-        updatedAt: serverTimestamp(),
-        transferCode: Math.floor(100000 + Math.random() * 900000).toString()
+        hiddenFrom: [],
+        updatedAt: serverTimestamp()
       });
-
       router.push(`/inbox/${newConvo.id}`);
-    } catch (error: any) {
-      toast({ variant: "destructive", title: "Kunde inte starta chatt", description: error.message });
-    } finally {
-      setLoading(false);
+    } catch (error: any) { 
+      console.error("Chat error:", error);
+      toast({ variant: "destructive", title: "Kunde inte starta chatt" }); 
+    } finally { 
+      setLoading(false); 
     }
   };
 
   const handleLogSubmit = async (newLog: Partial<VehicleLog>) => {
-    if (!user || !vehicle || !db || !storage) return;
+    if (!user || !vehicle || !db) return;
     setLoading(true);
     try {
       const plate = vehicle.licensePlate.toUpperCase().replace(/[^A-Z0-9]/g, '');
       const batch = writeBatch(db);
-      
-      // Skapa ID för loggen i förväg så vi kan använda det för Storage-sökvägen
       const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs');
       const logId = editingLog?.id || doc(logsRef).id;
       const logDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs', logId);
 
-      // Kritiskt: Om bild finns, ladda upp till Storage och ta bort Base64 från Firestore-objektet
-      let hasStoragePhoto = false;
-      if (newLog.photoUrl && newLog.photoUrl.startsWith('data:')) {
-        const storageRef = ref(storage, `receipts/${plate}/${logId}`);
-        await uploadString(storageRef, newLog.photoUrl, 'data_url');
-        hasStoragePhoto = true;
-      }
-
+      // Vi skippar Firebase Storage helt för att undvika CORS-fel i utvecklingsmiljön.
+      // Bilden sparas istället direkt i Firestore-dokumentet.
       const logData = {
         id: logId,
         vehicleId: plate,
@@ -165,96 +169,50 @@ export default function WorkshopPage() {
         odometer: newLog.odometer,
         cost: newLog.cost || null,
         notes: newLog.notes || '',
-        hasStoragePhoto: hasStoragePhoto,
-        isVerified: newLog.isVerified || false,
+        photoUrl: newLog.photoUrl || null, // Sparas direkt i Firestore
+        hasStoragePhoto: false, // Flagga för att indikera att vi inte behöver hämta från Storage
+        isVerified: true, 
         approvalStatus: 'pending',
-        verificationSource: newLog.verificationSource || 'Workshop',
+        verificationSource: 'Workshop',
         createdAt: editingLog ? (editingLog.createdAt || serverTimestamp()) : serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
 
       batch.set(logDocRef, logData, { merge: true });
-      
-      const customerRef = doc(db, 'artifacts', appId, 'public', 'data', 'workshops', user.uid, 'servicedCars', plate);
-      batch.set(customerRef, {
-        id: plate,
-        licensePlate: plate,
-        make: vehicle.make,
-        model: vehicle.model,
-        mainImage: vehicle.mainImage || null,
-        lastServicedAt: serverTimestamp()
+      batch.set(doc(db, 'artifacts', appId, 'public', 'data', 'workshops', user.uid, 'servicedCars', plate), {
+        id: plate, licensePlate: plate, make: vehicle.make, model: vehicle.model, mainImage: vehicle.mainImage || null, lastServicedAt: serverTimestamp()
       }, { merge: true });
 
       if (newLog.odometer && newLog.odometer > vehicle.currentOdometerReading) {
-        const vehicleRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate);
-        const vehicleUpdates: any = {
-          currentOdometerReading: newLog.odometer,
-          updatedAt: serverTimestamp(),
-        };
-        
-        if (newLog.category === 'Besiktning') {
-          vehicleUpdates.inspectionFloorOdometer = newLog.odometer;
-        }
-        
-        batch.update(vehicleRef, vehicleUpdates);
+        batch.update(doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate), { currentOdometerReading: newLog.odometer, updatedAt: serverTimestamp() });
       }
 
       if (vehicle.ownerId) {
-        const notificationRef = doc(db, 'artifacts', appId, 'public', 'data', 'pending_approvals', `${plate}_${user.uid}`);
-        batch.set(notificationRef, {
-          ownerId: vehicle.ownerId,
-          plate: plate,
-          workshopId: user.uid,
-          createdAt: serverTimestamp()
+        batch.set(doc(db, 'artifacts', appId, 'public', 'data', 'pending_approvals', `${plate}_${user.uid}`), {
+          ownerId: vehicle.ownerId, 
+          plate: plate, 
+          workshopId: user.uid, 
+          createdAt: serverTimestamp(),
+          vehicleTitle: `${vehicle.make} ${vehicle.model}`,
+          logData: { ...logData }
         });
       }
       
       await batch.commit();
       toast({ title: editingLog ? "Ändring sparad!" : "Service registrerad!" });
-      fetchServicedCars();
+      
       setIsLogDialogOpen(false);
       setEditingLog(null);
+      fetchServicedCars();
     } catch (error: any) { 
-      console.error("Fel vid spara:", error);
-      toast({ variant: "destructive", title: "Fel", description: error.message }); 
-    } finally {
+      console.error("Submit error:", error);
+      toast({ variant: "destructive", title: "Systemfel vid sparning" }); 
+    } finally { 
       setLoading(false);
     }
   };
 
-  const handleDeleteLog = async (log: VehicleLog) => {
-    if (!db || !vehicle || !user || !log.id) return;
-    
-    try {
-      const plate = vehicle.licensePlate.toUpperCase().replace(/[^A-Z0-9]/g, '');
-      const batch = writeBatch(db);
-      
-      const logRef = doc(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs', log.id);
-      batch.delete(logRef);
-      
-      try {
-        const notificationRef = doc(db, 'artifacts', appId, 'public', 'data', 'pending_approvals', `${plate}_${user.uid}`);
-        batch.delete(notificationRef);
-      } catch (e) {}
-
-      const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs');
-      const qLogs = query(logsRef, where('creatorId', '==', user.uid));
-      const snap = await getDocs(qLogs);
-      
-      if (snap.size <= 1) {
-        const customerRef = doc(db, 'artifacts', appId, 'public', 'data', 'workshops', user.uid, 'servicedCars', plate);
-        batch.delete(customerRef);
-      }
-
-      await batch.commit();
-      toast({ title: "Registrering raderad." });
-      fetchServicedCars();
-    } catch (e: any) {
-      toast({ variant: "destructive", title: "Kunde inte radera", description: e.message });
-    }
-  };
-
-  if (isUserLoading) return <div className="flex justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
+  if (isUserLoading) return <div className="flex justify-center py-20"><Loader2 className="animate-spin text-primary" /></div>;
 
   return (
     <div className="container max-w-4xl mx-auto px-4 py-8 pb-32">
@@ -263,94 +221,47 @@ export default function WorkshopPage() {
           <h1 className="text-4xl font-headline font-bold text-white">Verkstadspanel</h1>
           <p className="text-muted-foreground">Hantera fordonshistorik med digitala stämplar.</p>
         </div>
-        <Button 
-          variant="outline" 
-          onClick={() => setIsHistoryListOpen(true)}
-          className="h-14 rounded-2xl bg-white/5 border-white/10 px-6 font-bold"
-        >
-          <List className="w-5 h-5 mr-2" /> Mina hanterade fordon
-        </Button>
+        <div className="flex gap-3">
+          <Button variant="outline" asChild className="h-14 rounded-2xl bg-white/5 border-white/10 px-6 relative">
+            <Link href="/workshop/events">
+              <HistoryIcon className="w-5 h-5 mr-2" /> Händelser
+              {unreadNotifications && unreadNotifications.length > 0 && (
+                <span className="absolute -top-1 -right-1 h-5 w-5 bg-red-500 rounded-full text-[10px] flex items-center justify-center font-bold animate-pulse">
+                  {unreadNotifications.length}
+                </span>
+              )}
+            </Link>
+          </Button>
+          <Button variant="outline" onClick={() => setIsHistoryListOpen(true)} className="h-14 rounded-2xl bg-white/5 border-white/10 px-6 font-bold"><List className="w-5 h-5 mr-2" /> Kundlista</Button>
+        </div>
       </header>
 
       <div className="space-y-8">
-        <Card className="glass-card border-white/5 rounded-3xl">
-          <CardContent className="pt-6">
-            <form onSubmit={(e) => handleSearch(e)} className="flex flex-col sm:flex-row gap-4">
-              <div className="relative flex-1">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
-                <Input 
-                  placeholder="Reg-nr (t.ex. ABC 123)" 
-                  className="pl-12 uppercase h-14 rounded-2xl bg-white/5 border-white/10 text-lg font-bold" 
-                  value={searchPlate} 
-                  onChange={(e) => setSearchPlate(e.target.value)} 
-                />
-              </div>
-              <Button type="submit" disabled={loading} className="px-10 font-bold h-14 rounded-2xl text-lg shadow-xl shadow-primary/20">
-                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Sök fordon"}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
+        <Card className="glass-card border-white/5 rounded-3xl"><CardContent className="pt-6">
+          <form onSubmit={(e) => handleSearch(e)} className="flex flex-col sm:flex-row gap-4">
+            <div className="relative flex-1">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+              <Input placeholder="Reg-nr (t.ex. ABC 123)" className="pl-12 uppercase h-14 rounded-2xl bg-white/5 border-white/10 text-lg font-bold" value={searchPlate} onChange={(e) => setSearchPlate(e.target.value)} />
+            </div>
+            <Button type="submit" disabled={loading} className="px-10 font-bold h-14 rounded-2xl text-lg shadow-xl shadow-primary/20">{loading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Sök fordon"}</Button>
+          </form>
+        </CardContent></Card>
 
         {vehicle && (
           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
             <Card className="glass-card border-primary/20 overflow-hidden rounded-[2.5rem] shadow-2xl">
               <div className="bg-primary/10 px-8 py-6 border-b border-primary/20 flex justify-between items-center">
-                <div className="flex items-center gap-3">
-                  <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center">
-                    <Wrench className="w-5 h-5 text-primary" />
-                  </div>
-                  <h3 className="text-xl font-headline font-bold">{vehicle.make} {vehicle.model}</h3>
-                </div>
-                <Badge className="text-2xl font-mono px-4 py-1.5 bg-white text-black border-2 border-slate-300 rounded-lg">
-                  {vehicle.licensePlate}
-                </Badge>
+                <div className="flex items-center gap-3"><div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center"><Wrench className="w-5 h-5 text-primary" /></div><h3 className="text-xl font-headline font-bold">{vehicle.make} {vehicle.model}</h3></div>
+                <Badge className="text-2xl font-mono px-4 py-1.5 bg-white text-black border-2 border-slate-300 rounded-lg">{vehicle.licensePlate}</Badge>
               </div>
-              
               <CardContent className="p-8 space-y-8">
                 <div className="grid grid-cols-2 gap-6">
-                  <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-                    <p className="text-[10px] font-bold uppercase tracking-widest opacity-50 mb-1">Mätarställning</p>
-                    <div className="flex items-center gap-2 text-2xl font-bold">
-                      <Gauge className="w-5 h-5 text-primary" /> {vehicle.currentOdometerReading?.toLocaleString()} mil
-                    </div>
-                  </div>
-                  <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-                    <p className="text-[10px] font-bold uppercase tracking-widest opacity-50 mb-1">Årsmodell</p>
-                    <div className="flex items-center gap-2 text-2xl font-bold">
-                      <Calendar className="w-5 h-5 text-accent" /> {vehicle.year}
-                    </div>
-                  </div>
+                  <div className="p-4 bg-white/5 rounded-2xl border border-white/5"><p className="text-[10px] font-bold uppercase tracking-widest opacity-50 mb-1">Mätarställning</p><div className="flex items-center gap-2 text-2xl font-bold"><Gauge className="w-5 h-5 text-primary" /> {vehicle.currentOdometerReading?.toLocaleString()} mil</div></div>
+                  <div className="p-4 bg-white/5 rounded-2xl border border-white/5"><p className="text-[10px] font-bold uppercase tracking-widest opacity-50 mb-1">Årsmodell</p><div className="flex items-center gap-2 text-2xl font-bold"><Calendar className="w-5 h-5 text-accent" /> {vehicle.year}</div></div>
                 </div>
-
                 <div className="flex flex-col sm:flex-row gap-4">
-                  <Button 
-                    className="flex-[2] h-20 text-xl font-bold rounded-2xl shadow-2xl shadow-primary/30" 
-                    onClick={() => { setEditingLog(null); setIsLogDialogOpen(true); }}
-                    disabled={loading}
-                  >
-                    {loading ? <Loader2 className="w-8 h-8 animate-spin" /> : <ShieldCheck className="w-8 h-8 mr-3" />} Registrera ny händelse
-                  </Button>
-                  {vehicle.ownerId && (
-                    <Button 
-                      variant="outline" 
-                      className="flex-1 h-20 text-lg font-bold rounded-2xl border-white/10"
-                      onClick={handleContactOwner}
-                    >
-                      <MessageCircle className="w-6 h-6 mr-2 text-primary" /> Skriv till ägare
-                    </Button>
-                  )}
-                </div>
-
-                <div className="pt-4">
-                  <h3 className="text-lg font-bold mb-6">Senaste historik för fordonet</h3>
-                  <RealtimeHistoryList 
-                    licensePlate={vehicle.licensePlate} 
-                    appId={appId} 
-                    currentUserId={user?.uid}
-                    onEdit={(log: VehicleLog) => { setEditingLog(log); setIsLogDialogOpen(true); }}
-                    onDelete={handleDeleteLog}
-                  />
+                  <Button className="flex-[2] h-20 text-xl font-bold rounded-2xl shadow-2xl shadow-primary/30" onClick={() => { setEditingLog(null); setIsLogDialogOpen(true); }} disabled={loading}>{loading ? <Loader2 className="w-8 h-8 animate-spin" /> : <ShieldCheck className="w-8 h-8 mr-3" />} Registrera ny händelse</Button>
+                  {vehicle.ownerId && <Button variant="outline" className="flex-1 h-20 text-lg font-bold rounded-2xl border-white/10" onClick={handleContactOwner}><MessageCircle className="w-6 h-6 mr-2 text-primary" /> Skriv till ägare</Button>}
                 </div>
               </CardContent>
             </Card>
@@ -359,121 +270,42 @@ export default function WorkshopPage() {
       </div>
 
       <Dialog open={isHistoryListOpen} onOpenChange={setIsHistoryListOpen}>
-        <DialogContent className="glass-card border-white/10 rounded-[2rem] sm:max-w-md max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-2xl font-headline">Mina hanterade fordon</DialogTitle>
+        <DialogContent className="glass-card border-white/10 rounded-[2rem] sm:max-w-[450px] max-h-[80vh] overflow-hidden flex flex-col p-0">
+          <DialogHeader className="p-6 pb-2 border-b border-white/5">
+            <DialogTitle className="text-2xl font-headline font-bold">Hanterade fordon</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3 pt-4">
+          <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
             {loadingServiced ? (
-              <div className="flex justify-center py-10"><Loader2 className="animate-spin h-8 w-8 text-primary" /></div>
+              <div className="flex justify-center py-10"><Loader2 className="animate-spin text-primary opacity-20" /></div>
             ) : servicedVehicles.length > 0 ? (
-              servicedVehicles.map(v => (
-                <button 
-                  key={v.id} 
-                  onClick={() => handleSearch(undefined, v.licensePlate)}
-                  className="w-full text-left p-3 bg-white/5 hover:bg-white/10 rounded-2xl transition-all border border-white/5 flex items-center gap-4 group"
-                >
-                  <div className="h-12 w-12 rounded-xl overflow-hidden bg-white/5 shrink-0 relative border border-white/10">
-                    {v.mainImage ? (
-                      <Image src={v.mainImage} alt="" fill className="object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center opacity-20"><Wrench className="w-5 h-5" /></div>
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-bold truncate">{v.make} {v.model}</p>
-                    <Badge variant="outline" className="mt-1 font-mono text-[10px] tracking-widest">{v.licensePlate}</Badge>
-                  </div>
-                  <ArrowRight className="w-5 h-5 text-primary opacity-0 group-hover:opacity-100 transition-all mr-2" />
-                </button>
-              ))
+              <div className="grid gap-3">
+                {servicedVehicles.map(v => (
+                  <button 
+                    key={v.id} 
+                    onClick={() => handleSearch(undefined, v.licensePlate)}
+                    className="w-full flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-all text-left"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="h-12 w-12 rounded-xl overflow-hidden bg-black/40 border border-white/10 shrink-0">
+                        {v.mainImage ? <img src={v.mainImage} className="w-full h-full object-cover" alt="" /> : <Wrench className="w-full h-full p-3 opacity-20" />}
+                      </div>
+                      <div>
+                        <p className="font-bold text-white">{v.make} {v.model}</p>
+                        <Badge variant="outline" className="mt-1 font-mono text-[10px] px-2 py-0 h-5 bg-white text-black border-none">{v.licensePlate}</Badge>
+                      </div>
+                    </div>
+                    <ArrowRight className="w-5 h-5 text-muted-foreground opacity-20" />
+                  </button>
+                ))}
+              </div>
             ) : (
-              <p className="text-center py-10 text-muted-foreground italic">Du har inte registrerat service på några fordon än.</p>
+              <div className="text-center py-10 opacity-40 italic">Inga fordon har hanterats ännu.</div>
             )}
           </div>
         </DialogContent>
       </Dialog>
 
-      {vehicle && (
-        <LogEventDialog 
-          isOpen={isLogDialogOpen} 
-          onClose={() => { setIsLogDialogOpen(false); setEditingLog(null); }} 
-          onSubmit={handleLogSubmit} 
-          currentOdometer={vehicle?.currentOdometerReading} 
-          userType="Workshop" 
-          initialData={editingLog || undefined} 
-        />
-      )}
-    </div>
-  );
-}
-
-function RealtimeHistoryList({ licensePlate, appId, currentUserId, onEdit, onDelete }: any) {
-  const db = useFirestore();
-  const logsQuery = useMemoFirebase(() => {
-    if (!db || !licensePlate) return null;
-    const plate = licensePlate.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    return collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs');
-  }, [db, licensePlate, appId]);
-  
-  const { data: logs, isLoading } = useCollection<VehicleLog>(logsQuery);
-  const sortedLogs = useMemo(() => logs ? [...logs].sort((a, b) => (b.date || '').localeCompare(a.date || '')) : [], [logs]);
-  
-  if (isLoading) return <div className="flex justify-center py-10"><Loader2 className="animate-spin h-8 w-8 text-primary" /></div>;
-  
-  return (
-    <div className="space-y-4">
-      {sortedLogs.map((log: any) => {
-        const canModify = currentUserId === log.creatorId;
-
-        return (
-          <Card key={log.id} className={`glass-card border-none overflow-hidden ${log.approvalStatus === 'pending' ? 'ring-1 ring-yellow-500/20' : ''}`}>
-            <div className="p-4 flex justify-between items-center">
-              <div className="flex gap-4 items-center">
-                <div className="h-10 w-10 rounded-xl bg-white/5 flex items-center justify-center text-primary">
-                  <Wrench className="w-5 h-5" />
-                </div>
-                <div>
-                  <p className="font-bold text-sm">
-                    {log.category} 
-                    {log.approvalStatus === 'pending' && <span className="text-[10px] text-yellow-500 ml-2 uppercase font-black">Väntar...</span>}
-                  </p>
-                  <p className="text-xs text-muted-foreground">{log.date} • {log.odometer} mil</p>
-                </div>
-              </div>
-              {canModify && (
-                <div className="flex gap-2 relative z-50">
-                  <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      onEdit(log);
-                    }} 
-                    className="h-10 w-10 rounded-full hover:bg-white/10"
-                  >
-                    <Edit3 className="w-4 h-4 opacity-40 hover:opacity-100" />
-                  </Button>
-                  <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      onDelete(log);
-                    }} 
-                    className="h-10 w-10 rounded-full text-destructive hover:bg-destructive/10"
-                  >
-                    <Trash2 className="w-4 h-4 opacity-40 hover:opacity-100" />
-                  </Button>
-                </div>
-              )}
-            </div>
-          </Card>
-        );
-      })}
-      {sortedLogs.length === 0 && <p className="text-center py-10 text-muted-foreground text-sm">Ingen historik registrerad.</p>}
+      {vehicle && <LogEventDialog isOpen={isLogDialogOpen} onClose={() => { setIsLogDialogOpen(false); setEditingLog(null); }} onSubmit={handleLogSubmit} currentOdometer={vehicle?.currentOdometerReading} userType="Workshop" initialData={editingLog || undefined} />}
     </div>
   );
 }

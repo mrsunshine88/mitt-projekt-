@@ -10,10 +10,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2, Camera, X, ShieldCheck } from 'lucide-react';
 import { useUser, useFirestore } from '@/firebase';
-import { doc, setDoc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { Vehicle } from '@/types/autolog';
-import Image from 'next/image';
 import { getAuth } from 'firebase/auth';
 import { firebaseConfig } from '@/firebase/config';
 import { sanitize } from '@/lib/utils';
@@ -53,7 +52,7 @@ export function PublishVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boo
     price: 0,
     description: '',
     fuelType: 'Bensin',
-    gearbox: 'Automat',
+    gearbox: 'Manuell',
     hp: 0,
     color: '',
     lastInspection: '',
@@ -61,18 +60,19 @@ export function PublishVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boo
 
   useEffect(() => {
     if (vehicle && isOpen) {
+      const isNewAd = !vehicle.isPublished;
+
       setFormData({
-        price: vehicle.isPublished ? (vehicle.price || 0) : 0,
-        description: vehicle.isPublished ? (vehicle.description || '') : '',
+        price: isNewAd ? 0 : (vehicle.price || 0),
+        description: isNewAd ? '' : (vehicle.description || ''),
         fuelType: vehicle.fuelType || 'Bensin',
-        gearbox: vehicle.gearbox || 'Automat',
+        gearbox: vehicle.gearbox || 'Manuell',
         hp: vehicle.hp || 0,
         color: vehicle.color || '',
         lastInspection: vehicle.lastInspection || '',
       });
       
-      // Ladda in existerande annonsbilder om det är en redigering, annars visa inget
-      if (vehicle.isPublished && vehicle.adImageUrls) {
+      if (!isNewAd && vehicle.adImageUrls && vehicle.adImageUrls.length > 0) {
         setPreviews(vehicle.adImageUrls);
       } else {
         setPreviews([]);
@@ -93,67 +93,54 @@ export function PublishVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boo
         };
         reader.readAsDataURL(file);
       });
+      e.target.value = '';
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const auth = getAuth();
-    if (!auth.currentUser || !db) return;
+    if (!auth.currentUser || !db || !vehicle) return;
     setLoading(true);
+    
     try {
-      const plate = vehicle.licensePlate.toUpperCase().replace(/\s/g, '');
-      const userProfileRef = doc(db, 'artifacts', appId, 'public', 'data', 'public_profiles', auth.currentUser.uid);
-      const userDoc = await getDoc(userProfileRef);
-      const userData = userDoc.exists() ? userDoc.data() : {};
+      const plate = (vehicle.licensePlate || vehicle.id || '').toUpperCase().replace(/\s/g, '');
+      if (!plate) throw new Error("Fordonet saknar identifierare.");
 
-      // LOGIK FÖR BILDISOLERING:
-      // Om användaren har laddat upp nya bilder, spara dem som adMainImage.
-      // Annars, om det är en ny annons och inga bilder valts, lämna adMainImage tomt (fallback sköts i UI).
-      const finalAdMainImage = hasNewImages && previews.length > 0 ? previews[0] : (vehicle.adMainImage || null);
-      const finalAdImageUrls = hasNewImages && previews.length > 0 ? previews : (vehicle.adImageUrls || null);
+      const carRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate);
+      const carSnap = await getDoc(carRef);
+      const carData = carSnap.exists() ? carSnap.data() : vehicle;
+      
+      const finalAdMainImage = hasNewImages ? (previews.length > 0 ? previews[0] : null) : (vehicle.adMainImage || null);
+      const finalAdImageUrls = hasNewImages ? (previews.length > 0 ? previews : null) : (vehicle.adImageUrls || null);
 
-      const listingData = sanitize({
-        ...vehicle,
+      const updatePayload = sanitize({
+        make: carData.make || vehicle.make || 'Bil',
+        model: carData.model || vehicle.model || '',
+        year: carData.year || vehicle.year || 0,
+        licensePlate: plate,
+        currentOdometerReading: carData.currentOdometerReading || vehicle.currentOdometerReading || 0,
+        mainImage: carData.mainImage || vehicle.mainImage || null,
+        ownerId: carData.ownerId || vehicle.ownerId || auth.currentUser.uid,
         ...formData,
-        id: plate,
-        ownerId: auth.currentUser.uid,
-        ownerName: userData.name || "Säljare",
-        ownerPhone: userData.phoneNumber || null,
-        ownerEmail: userData.email || auth.currentUser.email,
-        // Vi sparar annonsbilderna i egna fält
         adMainImage: finalAdMainImage,
         adImageUrls: finalAdImageUrls,
         isPublished: true,
         updatedAt: serverTimestamp(),
       });
 
-      // 1. Skapa/Uppdatera annonsen i public_listings
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'public_listings', plate), listingData);
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'public_listings', plate), updatePayload, { merge: true });
+      await setDoc(carRef, updatePayload, { merge: true });
       
-      // 2. Uppdatera endast status i bilregistren, RÖR INTE mainImage (profilbilden)
-      const statusUpdate = sanitize({ 
-        isPublished: true, 
-        price: formData.price,
-        description: formData.description,
-        fuelType: formData.fuelType,
-        gearbox: formData.gearbox,
-        hp: formData.hp,
-        color: formData.color,
-        adMainImage: finalAdMainImage,
-        adImageUrls: finalAdImageUrls,
-        updatedAt: serverTimestamp() 
-      });
-
-      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate), statusUpdate);
-      
-      const privateRef = doc(db, 'artifacts', appId, 'users', auth.currentUser.uid, 'vehicles', plate);
-      await updateDoc(privateRef, statusUpdate);
+      const ownerToUpdate = carData.ownerId || vehicle.ownerId || auth.currentUser.uid;
+      const privateRef = doc(db, 'artifacts', appId, 'users', ownerToUpdate, 'vehicles', plate);
+      await setDoc(privateRef, updatePayload, { merge: true });
       
       toast({ title: vehicle.isPublished ? "Annons ändrad!" : "Annons publicerad!" });
       onClose();
     } catch (err: any) { 
-      toast({ variant: "destructive", title: "Fel", description: err.message });
+      console.error("Publish error:", err);
+      toast({ variant: "destructive", title: "Fel vid publicering", description: err.message });
     } finally { 
       setLoading(false); 
     }
@@ -161,19 +148,26 @@ export function PublishVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boo
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="glass-card p-6 rounded-[2.5rem] sm:max-w-xl max-h-[90vh] overflow-y-auto border-none">
+      <DialogContent className="glass-card p-6 rounded-[2.5rem] sm:max-w-[550px] max-h-[90vh] overflow-y-auto border-none">
         <DialogHeader>
           <DialogTitle className="text-2xl font-headline flex items-center gap-2">
-            {vehicle.isPublished ? 'Redigera annons' : 'Publicera annons'} <ShieldCheck className="w-6 h-6 text-primary" />
+            {vehicle?.isPublished ? 'Redigera annons' : 'Publicera annons'} <ShieldCheck className="w-6 h-6 text-primary" />
           </DialogTitle>
-          <DialogDescription>Justera annonsens innehåll. Dina profilbilder i garaget påverkas inte.</DialogDescription>
+          <DialogDescription>Justera annonsens innehåll. Fordonets fasta profilbild i garaget påverkas inte.</DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-6 pt-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label className="text-xs font-bold uppercase opacity-60">Pris (SEK)</Label>
-              <Input type="number" value={formData.price || ''} onChange={(e) => setFormData({...formData, price: parseInt(e.target.value) || 0})} className="bg-white/5 h-12 rounded-xl" required />
+              <Input 
+                type="number" 
+                value={formData.price || ''} 
+                onChange={(e) => setFormData({...formData, price: parseInt(e.target.value) || 0})} 
+                className="bg-white/5 h-12 rounded-xl" 
+                required 
+                placeholder="Ange pris..."
+              />
             </div>
             <div className="space-y-2">
               <Label className="text-xs font-bold uppercase opacity-60">Färg</Label>
@@ -218,11 +212,12 @@ export function PublishVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boo
           </div>
 
           <div className="space-y-4">
-            <Label className="text-xs font-bold uppercase opacity-60">Annonsbilder (Valfritt - faller tillbaka på profilbilden)</Label>
+            <Label className="text-xs font-bold uppercase opacity-60">Annonsbilder (Max 5)</Label>
+            <p className="text-[10px] text-muted-foreground italic -mt-2">Om du tar bort alla annonsbilder visas bilens profilbild istället.</p>
             <div className="grid grid-cols-5 gap-3">
               {previews.map((p, i) => (
                 <div key={i} className="aspect-square relative rounded-xl overflow-hidden border border-white/10 group">
-                  <Image src={p} alt="Preview" fill className="object-cover" />
+                  <img src={p} alt="Preview" className="w-full h-full object-cover" />
                   <button type="button" onClick={() => {
                     const newPreviews = previews.filter((_, idx) => idx !== i);
                     setPreviews(newPreviews);
@@ -243,7 +238,7 @@ export function PublishVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boo
           <DialogFooter className="gap-3 pt-4">
             <Button variant="ghost" type="button" onClick={onClose} className="rounded-xl flex-1">Avbryt</Button>
             <Button type="submit" disabled={loading} className="rounded-xl flex-[2] font-bold text-lg shadow-xl shadow-primary/20">
-              {loading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : (vehicle.isPublished ? "Ändra annons" : "Publicera annons")}
+              {loading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : (vehicle?.isPublished ? "Spara ändringar" : "Publicera annons")}
             </Button>
           </DialogFooter>
         </form>

@@ -20,7 +20,7 @@ import { doc } from 'firebase/firestore';
 interface LogEventDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (log: Partial<VehicleLog>) => void;
+  onSubmit: (log: Partial<VehicleLog>) => Promise<void>;
   currentOdometer?: number;
   inspectionFloor?: number;
   licensePlate?: string;
@@ -185,7 +185,7 @@ export function LogEventDialog({
     await handleImageSelection(dataUri);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!isAdmin) {
@@ -200,24 +200,28 @@ export function LogEventDialog({
     }
 
     setLoading(true);
-    let nextServiceDate = undefined;
-    if (formData.category === 'Service' && formData.date) {
-      nextServiceDate = format(addMonths(parseISO(formData.date), 12), 'yyyy-MM-dd');
-    }
+    try {
+      let nextServiceDate = undefined;
+      if (formData.category === 'Service' && formData.date) {
+        nextServiceDate = format(addMonths(parseISO(formData.date), 12), 'yyyy-MM-dd');
+      }
 
-    // Kritiskt: photoUrl skickas vidare för att laddas upp till Storage av anroparen
-    onSubmit({ 
-      ...formData, 
-      photoUrl: photoUrl || undefined,
-      nextServiceDate,
-      type: isWorkshop ? 'Proposal' : (isLowering ? 'Correction' : 'Update'),
-      approvalStatus: isWorkshop ? 'pending' : 'approved',
-      isVerified: !!photoUrl, 
-      verificationSource: isWorkshop ? 'Workshop' : (photoUrl ? 'AI' : 'User'),
-      performedBy: isWorkshop ? 'Workshop' : 'Owner'
-    });
-    setLoading(false);
-    onClose();
+      await onSubmit({ 
+        ...formData, 
+        photoUrl: photoUrl || undefined,
+        nextServiceDate,
+        type: isWorkshop ? 'Proposal' : (isLowering ? 'Correction' : 'Update'),
+        approvalStatus: isWorkshop ? 'pending' : 'approved',
+        isVerified: !!photoUrl, 
+        verificationSource: isWorkshop ? 'Workshop' : (photoUrl ? 'AI' : 'User'),
+        performedBy: isWorkshop ? 'Workshop' : 'Owner'
+      });
+      onClose();
+    } catch (err) {
+      console.error("Submit error:", err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

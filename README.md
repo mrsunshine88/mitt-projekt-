@@ -1,21 +1,20 @@
-# AutoLog - Digital Servicebok med Verifierad Historik
 
-Välkommen till AutoLog, en modern lösning för att digitalisera och verifiera fordonshistorik.
+# AutoLog – Din digitala annons och servicebok
 
-## Funktioner
-- **Digitala Bildbevis**: Ladda upp och spara bilder på besiktningsprotokoll och kvitton för en transparent historik.
-- **Mätarsäkring**: Ett "besiktningsgolv" förhindrar mätarfusk genom krav på dokumentation vid sänkning.
-- **Digitalt Certifikat**: Skapa en publik länk för att visa upp bilens verifierade historik vid försäljning.
-- **Workshop Portal**: Verkstäder kan sätta digitala stämplar och skicka serviceförslag direkt till ägaren.
-- **Säkra Ägarbyten**: Överför hela bilens digitala historik till en ny ägare med hjälp av säkra överlåtelsekoder.
+Välkommen till AutoLog, den kompletta lösningen för att säkra och maximera värdet på ditt fordon genom verifierad historik och integrerad försäljning.
 
-## Driftsättning (Live)
-Detta är en Next.js-applikation med Server Components och Firebase.
+## Marknadens första hybrida plattform
+AutoLog är unik genom att förena bilens livscykel på ett ställe. Från den första verkstadsstämpeln till den dag bilen byter ägare.
 
-### Rekommenderad metod: Firebase App Hosting
-1. Ladda ner projektet som en ZIP från Firebase Studio.
-2. Ladda upp koden till ett GitHub-arkiv.
-3. Gå till [Firebase Console](https://console.firebase.google.com/).
-4. Välj **App Hosting** i menyn och anslut ditt arkiv.
+## Nyckelfunktioner
+- **Mätarsäkring**: Ett digitalt besiktningsgolv som stoppar mätarfusk för gott.
+- **Verkstadsportalen**: Professionella aktörer sätter digitala stämplar med låst information och kvitto-bevis.
+- **Sömlös Annonsering**: Förvandla din verifierade servicebok till en slagkraftig annons med ett klick.
+- **Säkra Ägarbyten**: Överför hela historiken till en ny ägare med digitala koder. All historik följer bilen, vilket höjer andrahandsvärdet.
+- **GDPR-Säkrat**: Vi skyddar din personliga information vid ägarbyten genom intelligent maskering av kvitton.
 
-Systemet kommer då automatiskt att bygga och publicera din applikation på en live-URL.
+## För Verkstäder
+AutoLog erbjuder verkstäder ett modernt verktyg för att stärka kundrelationen. Skicka serviceförslag direkt till kundens app och sätt digitala stämplar som aldrig tappas bort.
+
+## Driftsättning
+Applikationen är byggd med Next.js 15 och Firebase, redo för produktion via Firebase App Hosting.
