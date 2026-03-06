@@ -29,18 +29,25 @@ service cloud.firestore {
       );
     }
 
+    function isAdmin() {
+      let appId = 'studio-3405255876-f647c';
+      return isSignedIn() && (
+        isSystemOwner() ||
+        get(/databases/$(database)/documents/artifacts/$(appId)/public/data/public_profiles/$(request.auth.uid)).data.role == 'Huvudadmin'
+      );
+    }
+
     match /artifacts/{appId}/public/data {
       match /cars/{licensePlate} {
         allow read: if true;
         allow write: if isSignedIn() && isNotBanned();
+        allow delete: if isAdmin();
       }
       match /vehicleHistory/{licensePlate}/logs/{logId} {
         allow read: if true;
         allow create: if isSignedIn() && isNotBanned();
-        allow update, delete: if isSignedIn() && isNotBanned() && (
-          request.auth.uid == resource.data.creatorId || 
-          isModerator()
-        );
+        allow update: if isSignedIn() && isNotBanned() && (request.auth.uid == resource.data.creatorId || isModerator());
+        allow delete: if isAdmin() || (isSignedIn() && isNotBanned() && request.auth.uid == resource.data.creatorId);
       }
       match /odometer_corrections/{plate} {
         allow read: if isModerator();
@@ -49,7 +56,7 @@ service cloud.firestore {
       }
       match /pending_approvals/{notificationId} {
         allow read: if isSignedIn();
-        allow create: if isSignedIn() && isNotBanned() && request.auth.uid == request.resource.data.workshopId;
+        allow create: if isSignedIn() && isNotBanned();
         allow update, delete: if isSignedIn() && isNotBanned() && (
           request.auth.uid == resource.data.ownerId || 
           request.auth.uid == resource.data.workshopId ||
@@ -58,7 +65,8 @@ service cloud.firestore {
       }
       match /public_listings/{listingId} {
         allow read: if true;
-        allow write, delete: if isSignedIn() && isNotBanned();
+        allow write: if isSignedIn() && isNotBanned();
+        allow delete: if isAdmin() || (isSignedIn() && isNotBanned() && request.auth.uid == resource.data.ownerId);
       }
       match /public_profiles/{userId} {
         allow read: if true;
@@ -76,9 +84,33 @@ service cloud.firestore {
         }
       }
       match /conversations/{conversationId} {
-        allow read, write: if isSignedIn() && isNotBanned() && (request.auth.uid in resource.data.participants || !exists(/databases/$(database)/documents/artifacts/$(appId)/public/data/conversations/$(conversationId)));
+        // Tillåt läsning om användaren är deltagare, köpare eller säljare
+        allow read: if isSignedIn() && (
+          request.auth.uid in resource.data.participants ||
+          resource.data.buyerId == request.auth.uid ||
+          resource.data.sellerId == request.auth.uid
+        );
+        // Tillåt listning (queries) för användarens egna konversationer
+        allow list: if isSignedIn() && (
+          request.auth.uid == resource.data.buyerId ||
+          request.auth.uid == resource.data.sellerId ||
+          request.auth.uid in resource.data.participants
+        );
+        allow create: if isSignedIn() && isNotBanned() && (
+          request.auth.uid == request.resource.data.buyerId ||
+          request.auth.uid == request.resource.data.sellerId
+        );
+        allow update: if isSignedIn() && isNotBanned() && (
+          request.auth.uid in resource.data.participants
+        );
+        allow delete: if isAdmin();
+        
         match /messages/{messageId} {
-          allow read, create: if isSignedIn() && isNotBanned();
+          allow read: if isSignedIn() && (
+            request.auth.uid in get(/databases/$(database)/documents/artifacts/$(appId)/public/data/conversations/$(conversationId)).data.participants
+          );
+          allow create: if isSignedIn() && isNotBanned();
+          allow delete: if isAdmin();
         }
       }
     }

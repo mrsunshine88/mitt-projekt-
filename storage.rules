@@ -1,0 +1,30 @@
+rules_version = '2';
+service cloud.storage {
+  match /b/{bucket}/o {
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function getCarOwner(plate) {
+      // Hämtar ägar-ID från bilens officiella register i Firestore
+      return firestore.get(/databases/(default)/documents/artifacts/studio-3405255876-f647c/public/data/cars/$(plate)).data.ownerId;
+    }
+
+    function isAdmin() {
+      // Verifierar administrativ roll via den publika profilen
+      return firestore.get(/databases/(default)/documents/artifacts/studio-3405255876-f647c/public/data/public_profiles/$(request.auth.uid)).data.role in ['Huvudadmin', 'Moderator'];
+    }
+
+    // Skydda alla kvitton och dokumentbevis
+    match /receipts/{plate}/{docId} {
+      allow read, write: if isSignedIn() && (request.auth.uid == getCarOwner(plate) || isAdmin());
+    }
+
+    // Standardregler för övriga filer (t.ex. profilbilder om de skulle flyttas hit)
+    match /{allPaths=**} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+  }
+}

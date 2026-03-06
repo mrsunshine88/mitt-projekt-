@@ -2,15 +2,17 @@
 "use client";
 
 import { VehicleLog, TrustLevel, UserProfile } from '@/types/autolog';
-import { Wrench, Settings, CircleDashed, Search, FileText, History, ChevronRight, Edit3, Clock, ShieldCheck, Trash2, ArrowLeftRight, CalendarCheck, AlertCircle, Maximize2, ImageIcon, Lock, Check, X } from 'lucide-react';
+import { Wrench, Settings, CircleDashed, Search, FileText, History, ChevronRight, Edit3, Clock, ShieldCheck, Trash2, ArrowLeftRight, CalendarCheck, AlertCircle, Maximize2, ImageIcon, Lock, Check, X, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { differenceInDays, parseISO, isValid, format } from 'date-fns';
 import { sv } from 'date-fns/locale';
 import { Button } from '@/components/ui/button';
-import { useUser, useFirestore, useDoc, useMemoFirebase } from '@/firebase';
+import { useUser, useFirestore, useDoc, useMemoFirebase, useStorage } from '@/firebase';
 import { doc } from 'firebase/firestore';
+import { ref, getDownloadURL } from 'firebase/storage';
 import { firebaseConfig } from '@/firebase/config';
+import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
 const CATEGORY_ICONS: any = {
@@ -72,6 +74,61 @@ export const calculateOverallTrust = (logs: VehicleLog[]): TrustLevel => {
   return 'Bronze';
 };
 
+/**
+ * En säker komponent för att visa kvitton från Firebase Storage.
+ * Verifierar behörighet via Storage Rules innan bild visas.
+ */
+function EvidenceImage({ plate, logId }: { plate: string, logId: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const storage = useStorage();
+
+  useEffect(() => {
+    if (!storage || !plate || !logId) return;
+    
+    const fetchSecureUrl = async () => {
+      try {
+        const storageRef = ref(storage, `receipts/${plate}/${logId}`);
+        const downloadUrl = await getDownloadURL(storageRef);
+        setUrl(downloadUrl);
+      } catch (e) {
+        // Om detta failar betyder det att Storage Rules nekade åtkomst (t.ex. vid ägarbyte)
+        setUrl(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchSecureUrl();
+  }, [storage, plate, logId]);
+
+  if (loading) return <div className="w-24 h-24 rounded-xl bg-white/5 flex items-center justify-center"><Loader2 className="w-4 h-4 animate-spin opacity-20" /></div>;
+  if (!url) return null;
+
+  return (
+    <div className="mt-4">
+      <Dialog>
+        <DialogTrigger asChild>
+          <div className="relative w-24 h-24 rounded-xl overflow-hidden cursor-zoom-in border border-white/10 group shadow-lg">
+            <img src={url} alt="Verifierat dokument" className="w-full h-full object-cover transition-transform group-hover:scale-110" />
+            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+              <Maximize2 className="w-5 h-5 text-white" />
+            </div>
+          </div>
+        </DialogTrigger>
+        <DialogContent className="max-w-[90vw] max-h-[90vh] p-0 bg-black/95 border-none rounded-none overflow-hidden">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Dokumentförstoring</DialogTitle>
+          </DialogHeader>
+          <div className="relative w-full h-full flex items-center justify-center p-4">
+            <img src={url} alt="Dokument i fullskärm" className="max-w-full max-h-[85vh] object-contain shadow-2xl" />
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 export function HistoryList({ logs, showPrivateData = false, onEdit, onDelete, onApprove, onReject }: any) {
   const { user } = useUser();
   const db = useFirestore();
@@ -85,7 +142,6 @@ export function HistoryList({ logs, showPrivateData = false, onEdit, onDelete, o
   
   const isHuvudAdmin = user?.email === 'apersson508@gmail.com' || profile?.role === 'Huvudadmin';
 
-  // Om vi visar privat data (ägaren), visa även väntande loggar. Annars bara godkända.
   const displayLogs = showPrivateData 
     ? (logs || [])
     : (logs || []).filter((l: any) => l.approvalStatus !== 'pending');
@@ -186,36 +242,19 @@ export function HistoryList({ logs, showPrivateData = false, onEdit, onDelete, o
                   </div>
                 )}
 
-                {/* PRIVAT DATA: Endast skaparen eller admin kan se kvitto-bilden (GDPR-skydd) */}
-                {log.photoUrl && (isCreator || isHuvudAdmin) ? (
-                  <div className="mt-4">
-                    <Dialog>
-                      <DialogTrigger asChild>
-                        <div className="relative w-24 h-24 rounded-xl overflow-hidden cursor-zoom-in border border-white/10 group shadow-lg">
-                          <img src={log.photoUrl} alt="Bifogat dokument" className="w-full h-full object-cover transition-transform group-hover:scale-110" />
-                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                            <Maximize2 className="w-5 h-5 text-white" />
-                          </div>
-                        </div>
-                      </DialogTrigger>
-                      <DialogContent className="max-w-[90vw] max-h-[90vh] p-0 bg-black/95 border-none rounded-none overflow-hidden">
-                        <DialogHeader>
-                          <DialogTitle className="sr-only">Dokumentförstoring</DialogTitle>
-                        </DialogHeader>
-                        <div className="relative w-full h-full flex items-center justify-center p-4">
-                          <img src={log.photoUrl} alt="Dokument i fullskärm" className="max-w-full max-h-[85vh] object-contain shadow-2xl" />
-                        </div>
-                      </DialogContent>
-                    </Dialog>
+                {/* SÄKER VISNING: Komponent som hämtar bild från Storage med behörighetskontroll */}
+                {(log.hasStoragePhoto || log.photoUrl) && (
+                  <div className="flex flex-col gap-2">
+                    <EvidenceImage plate={log.licensePlate} logId={log.id} />
+                    {!isCreator && !isHuvudAdmin && (log.hasStoragePhoto || log.photoUrl) && (
+                      <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-white/5 rounded-lg border border-white/10 text-[10px] font-bold text-muted-foreground uppercase w-fit">
+                        <Lock className="w-3 h-3" /> 
+                        {showPrivateData ? 'Kvitto från tidigare ägare (Dolt pga GDPR)' : 'Verifierat kvitto finns (Dolt för köpare)'}
+                      </div>
+                    )}
                   </div>
-                ) : log.photoUrl ? (
-                  <div className="mt-4 inline-flex items-center gap-2 px-3 py-1.5 bg-white/5 rounded-lg border border-white/10 text-[10px] font-bold text-muted-foreground uppercase">
-                    <Lock className="w-3 h-3" /> 
-                    {showPrivateData ? 'Kvitto från tidigare ägare (Dolt pga GDPR)' : 'Verifierat kvitto finns (Dolt för köpare)'}
-                  </div>
-                ) : null}
+                )}
 
-                {/* ÅTGÄRDSKNAPPAR FÖR ÄGARE VID VÄNTANDE SERVICE */}
                 {isPending && showPrivateData && !isCreator && (
                   <div className="mt-6 flex flex-col sm:flex-row gap-3">
                     <Button 

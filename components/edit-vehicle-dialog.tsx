@@ -8,9 +8,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Camera, CheckCircle2, Upload, Trash2, ImagePlus, AlertCircle, FileText, Send, Gauge } from 'lucide-react';
-import { useFirestore, useUser } from '@/firebase';
-import { doc, updateDoc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { Loader2, Camera, CheckCircle2, Upload, Trash2, ImagePlus, AlertCircle, Gauge } from 'lucide-react';
+import { useUser, useFirestore } from '@/firebase';
+import { doc, updateDoc, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { Vehicle } from '@/types/autolog';
 import { SWEDISH_CAR_BRANDS } from '@/constants/car-brands';
@@ -19,23 +19,28 @@ import { sanitize } from '@/lib/utils';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 const processImage = (dataUri: string): Promise<string> => {
-  return new Promise((resolve) => {
-    const img = new window.Image();
+  return new Promise((resolve, reject) => {
+    const img = new Image();
     img.onload = () => {
-      const canvas = document.createElement('canvas');
-      const MAX_WIDTH = 800;
-      let width = img.width;
-      let height = img.height;
-      if (width > MAX_WIDTH) {
-        height *= MAX_WIDTH / width;
-        width = MAX_WIDTH;
+      try {
+        const canvas = document.createElement('canvas');
+        const MAX_WIDTH = 800;
+        let width = img.width;
+        let height = img.height;
+        if (width > MAX_WIDTH) {
+          height = (MAX_WIDTH / width) * height;
+          width = MAX_WIDTH;
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.6));
+      } catch (e) {
+        reject(e);
       }
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      ctx?.drawImage(img, 0, 0, width, height);
-      resolve(canvas.toDataURL('image/jpeg', 0.5));
     };
+    img.onerror = reject;
     img.src = dataUri;
   });
 };
@@ -43,9 +48,7 @@ const processImage = (dataUri: string): Promise<string> => {
 export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolean; onClose: () => void; vehicle: Vehicle; }) {
   const [loading, setLoading] = useState(false);
   const [isCameraActive, setIsCameraActive] = useState(false);
-  const [photoPreview, setPhotoPreview] = useState<string | null>(vehicle.mainImage || null);
-  
-  // Correction States
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [correctionProof, setCorrectionProof] = useState<string | null>(null);
   
   const { user } = useUser();
@@ -58,25 +61,25 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const [formData, setFormData] = useState({
-    make: vehicle.make,
-    model: vehicle.model,
-    year: vehicle.year,
-    currentOdometerReading: vehicle.currentOdometerReading,
-    fuelType: vehicle.fuelType || 'Bensin',
-    gearbox: vehicle.gearbox || 'Automat',
-    hp: vehicle.hp || 0,
-    color: vehicle.color || '',
+    make: '',
+    model: '',
+    year: 0,
+    currentOdometerReading: 0,
+    fuelType: 'Bensin',
+    gearbox: 'Automat',
+    hp: 0,
+    color: '',
   });
 
-  const isLowering = formData.currentOdometerReading < vehicle.currentOdometerReading;
+  const isLowering = formData.currentOdometerReading < (vehicle?.currentOdometerReading || 0);
 
   useEffect(() => {
     if (vehicle && isOpen) {
       setFormData({
-        make: vehicle.make,
-        model: vehicle.model,
-        year: vehicle.year,
-        currentOdometerReading: vehicle.currentOdometerReading,
+        make: vehicle.make || '',
+        model: vehicle.model || '',
+        year: vehicle.year || 0,
+        currentOdometerReading: vehicle.currentOdometerReading || 0,
         fuelType: vehicle.fuelType || 'Bensin',
         gearbox: vehicle.gearbox || 'Automat',
         hp: vehicle.hp || 0,
@@ -86,6 +89,46 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
       setCorrectionProof(null);
     }
   }, [vehicle, isOpen]);
+
+  useEffect(() => {
+    let stream: MediaStream | null = null;
+
+    const startCamera = async () => {
+      if (isCameraActive && videoRef.current) {
+        try {
+          // Försök med baksideskamera först, annars fallback till valfri kamera (fixar NotReadableError på PC)
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ 
+              video: { facingMode: { ideal: 'environment' } } 
+            });
+          } catch (e) {
+            stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          }
+          
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+          }
+        } catch (err: any) {
+          console.error("Camera error:", err);
+          const msg = err.name === 'NotReadableError' 
+            ? "Kameran används redan av ett annat program." 
+            : "Kunde inte starta kameran. Kontrollera behörigheter.";
+          toast({ variant: "destructive", title: "Kamerafel", description: msg });
+          setIsCameraActive(false);
+        }
+      }
+    };
+
+    if (isCameraActive) {
+      const timer = setTimeout(startCamera, 150);
+      return () => {
+        clearTimeout(timer);
+        if (stream) {
+          stream.getTracks().forEach(t => t.stop());
+        }
+      };
+    }
+  }, [isCameraActive, toast]);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -109,40 +152,24 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
     reader.readAsDataURL(file);
   };
 
-  const startCamera = async () => {
-    setIsCameraActive(true);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-      if (videoRef.current) videoRef.current.srcObject = stream;
-    } catch (err) {
-      toast({ variant: "destructive", title: "Kamerafel" });
-      setIsCameraActive(false);
-    }
-  };
-
   const capturePhoto = async () => {
     if (!videoRef.current || !canvasRef.current) return;
     const context = canvasRef.current.getContext('2d');
+    if (!context) return;
+    
     canvasRef.current.width = videoRef.current.videoWidth;
     canvasRef.current.height = videoRef.current.videoHeight;
-    context?.drawImage(videoRef.current, 0, 0);
+    context.drawImage(videoRef.current, 0, 0);
+    
     const optimized = await processImage(canvasRef.current.toDataURL('image/jpeg', 0.8));
     setPhotoPreview(optimized);
-    stopCamera();
-  };
-
-  const stopCamera = () => {
-    if (videoRef.current?.srcObject) {
-      (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
-    }
     setIsCameraActive(false);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !db) return;
+    if (!user || !db || !vehicle) return;
 
-    // Om miltalet sänks, skicka ansökan istället för att bara uppdatera
     if (isLowering) {
       if (!correctionProof) {
         toast({ variant: "destructive", title: "Bevis krävs", description: "Du måste bifoga ett besiktningsprotokoll för att sänka miltalet." });
@@ -151,7 +178,6 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
       setLoading(true);
       try {
         const plate = vehicle.licensePlate.toUpperCase().replace(/[^A-Z0-9]/g, '');
-        // Vi sparar i det centrala registret för korrigeringar
         const requestRef = doc(db, 'artifacts', appId, 'public', 'data', 'odometer_corrections', plate);
         await setDoc(requestRef, {
           id: plate,
@@ -174,17 +200,34 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
       return;
     }
 
-    // Vanlig uppdatering (miltal samma eller högre)
     setLoading(true);
     try {
       const plate = vehicle.licensePlate.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const batch = writeBatch(db);
+      
       const globalRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate);
-      const updates = sanitize({ 
+      const privateRef = doc(db, 'artifacts', appId, 'users', user.uid, 'vehicles', plate);
+      const listingRef = doc(db, 'artifacts', appId, 'public', 'data', 'public_listings', plate);
+      
+      const updates: any = sanitize({ 
         ...formData, 
         mainImage: photoPreview,
         updatedAt: serverTimestamp() 
       });
-      await updateDoc(globalRef, updates);
+
+      // Synka bildgalleri om bilden ändrats (löser buggen med låsta bilder)
+      if (photoPreview && photoPreview !== vehicle.mainImage) {
+        updates.imageUrls = [photoPreview, ...(vehicle.imageUrls?.slice(1) || [])];
+      }
+
+      if (vehicle.isPublished) {
+        batch.update(listingRef, updates);
+      }
+      
+      batch.update(globalRef, updates);
+      batch.update(privateRef, updates);
+
+      await batch.commit();
       toast({ title: "Fordon uppdaterat!" });
       onClose();
     } catch (err: any) { 
@@ -195,7 +238,7 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(o) => { if(!o) stopCamera(); onClose(); }}>
+    <Dialog open={isOpen} onOpenChange={(o) => { if(!o) setIsCameraActive(false); onClose(); }}>
       <DialogContent className="glass-card p-0 rounded-[2.5rem] sm:max-w-xl max-h-[90vh] overflow-y-auto border-none">
         <div className="p-6 space-y-6">
           <DialogHeader>
@@ -210,7 +253,7 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
                 <div className="relative aspect-video rounded-3xl overflow-hidden bg-black">
                   <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
                   <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-3 px-4">
-                    <Button variant="outline" onClick={stopCamera} className="bg-black/40 border-white/20">Avbryt</Button>
+                    <Button variant="outline" type="button" onClick={() => setIsCameraActive(false)} className="bg-black/40 border-white/20">Avbryt</Button>
                     <Button type="button" onClick={capturePhoto} className="bg-primary shadow-xl">Ta bild</Button>
                   </div>
                 </div>
@@ -221,7 +264,7 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
                       <>
                         <img src={photoPreview} alt="Bil" className="w-full h-full object-cover" />
                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                          <Button variant="destructive" size="sm" onClick={() => setPhotoPreview(null)} className="rounded-full h-10 w-10 p-0"><Trash2 className="w-4 h-4" /></Button>
+                          <Button variant="destructive" type="button" size="sm" onClick={() => setPhotoPreview(null)} className="rounded-full h-10 w-10 p-0"><Trash2 className="w-4 h-4" /></Button>
                         </div>
                       </>
                     ) : (
@@ -232,7 +275,7 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
                     )}
                   </div>
                   <div className="grid grid-cols-2 gap-3">
-                    <Button variant="outline" type="button" onClick={startCamera} className="h-12 rounded-xl bg-white/5 border-white/10"><Camera className="w-4 h-4 mr-2" /> Kamera</Button>
+                    <Button variant="outline" type="button" onClick={() => setIsCameraActive(true)} className="h-12 rounded-xl bg-white/5 border-white/10"><Camera className="w-4 h-4 mr-2" /> Kamera</Button>
                     <Button variant="outline" type="button" onClick={() => fileInputRef.current?.click()} className="h-12 rounded-xl bg-white/5 border-white/10"><Upload className="w-4 h-4 mr-2" /> Välj fil</Button>
                     <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
                   </div>
@@ -250,7 +293,7 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
                   <Gauge className={`absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 ${isLowering ? 'text-destructive' : 'text-primary'}`} />
                   <Input 
                     type="number" 
-                    value={formData.currentOdometerReading} 
+                    value={formData.currentOdometerReading || ''} 
                     onChange={(e) => setFormData({...formData, currentOdometerReading: parseInt(e.target.value) || 0})} 
                     className={`h-14 pl-12 text-xl font-bold bg-background rounded-xl ${isLowering ? 'border-destructive ring-destructive/20' : 'border-white/10'}`} 
                   />
@@ -331,7 +374,7 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
             <DialogFooter className="gap-3 pt-4">
               <Button variant="ghost" type="button" onClick={onClose} className="rounded-xl flex-1">Avbryt</Button>
               <Button type="submit" disabled={loading} className={`rounded-xl flex-[2] font-bold text-lg shadow-xl ${isLowering ? 'bg-destructive hover:bg-destructive/90 shadow-destructive/20' : 'shadow-primary/20'}`}>
-                {loading ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : isLowering ? "Skicka ansökan" : "Spara händelse"}
+                {loading ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : isLowering ? "Skicka ansökan" : "Spara ändringar"}
               </Button>
             </DialogFooter>
           </form>

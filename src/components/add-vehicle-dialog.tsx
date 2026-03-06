@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useRef, useEffect } from 'react';
@@ -45,7 +44,6 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
   const [loading, setLoading] = useState(false);
   const [processingImage, setProcessingImage] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [hasCameraPermission, setHasCameraPermission] = useState(false);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [existingHistoryFound, setExistingHistoryFound] = useState(false);
   const [isSearchingPlate, setIsSearchingPlate] = useState(false);
@@ -80,7 +78,6 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
         const data = globalSnap.data();
         setExistingHistoryFound(true);
         
-        // Hämta låst miltal (golvet)
         const lockedOdometer = data.inspectionFloorOdometer || data.currentOdometerReading || 0;
         
         setFormData(prev => ({
@@ -108,23 +105,43 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
   };
 
   useEffect(() => {
-    if (step === 'camera' && !hasCameraPermission) {
-      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-        .then(stream => {
-          setHasCameraPermission(true);
-          if (videoRef.current) videoRef.current.srcObject = stream;
-        }).catch(() => {
-          setHasCameraPermission(false);
-          setError("Kunde inte starta kameran.");
+    let stream: MediaStream | null = null;
+
+    const startCamera = async () => {
+      if (step === 'camera' && videoRef.current) {
+        try {
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ 
+              video: { facingMode: { ideal: 'environment' } } 
+            });
+          } catch (e) {
+            stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          }
+          
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+          }
+        } catch (err: any) {
+          console.error("Camera error:", err);
+          const msg = err.name === 'NotReadableError' 
+            ? "Kameran används redan av ett annat program." 
+            : "Kunde inte starta kameran.";
+          setError(msg);
           setStep('photo-choice');
-        });
-    }
-    return () => {
-      if (videoRef.current?.srcObject) {
-        (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
+        }
       }
     };
-  }, [step, hasCameraPermission]);
+
+    if (step === 'camera') {
+      const timer = setTimeout(startCamera, 150);
+      return () => {
+        clearTimeout(timer);
+        if (stream) {
+          stream.getTracks().forEach(t => t.stop());
+        }
+      };
+    }
+  }, [step]);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -175,7 +192,6 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
           setLoading(false);
           return;
         }
-        // Vi behåller alltid det högsta kända golvet
         initialFloor = Math.max(initialFloor, existingData.inspectionFloorOdometer || 0);
       }
 
@@ -186,11 +202,12 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
         ownerId: user.uid, 
         ownerEmail: user.email,
         ownerName: user.displayName || 'Bilägare',
-        mainImage: photoPreview || (globalSnap.exists() ? globalSnap.data().mainImage : null), 
+        mainImage: photoPreview,
+        imageUrls: photoPreview ? [photoPreview] : [],
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         inspectionFloorOdometer: initialFloor,
-        currentOdometerReading: initialFloor // Säkerställ att mätaren står på golvet
+        currentOdometerReading: initialFloor 
       });
 
       const privateVehicleRef = doc(db, 'artifacts', appId, 'users', user.uid, 'vehicles', plate);
@@ -235,16 +252,6 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
             <Alert variant="destructive" className="mb-4 bg-destructive/10 border-destructive/20">
               <AlertCircle className="h-4 w-4" />
               <AlertDescription className="text-xs">{error}</AlertDescription>
-            </Alert>
-          )}
-
-          {existingHistoryFound && step === 'info' && (
-            <Alert className="mb-4 bg-primary/10 border-primary/20 text-primary animate-in zoom-in duration-300">
-              <ShieldAlert className="h-4 w-4" />
-              <AlertTitle className="text-[10px] font-black uppercase tracking-widest">Verifierad historik hittades</AlertTitle>
-              <AlertDescription className="text-[10px]">
-                Bilens miltal har hämtats från det publika registret och kan inte sänkas.
-              </AlertDescription>
             </Alert>
           )}
 
@@ -377,7 +384,7 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
         {step === 'ready' && (
           <div className="p-6 bg-white/5 border-t border-white/10">
             <Button onClick={handleSubmit} disabled={loading} className="w-full h-16 rounded-2xl font-bold text-xl bg-green-600 hover:bg-green-500 text-white">
-              {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : 'Spara bil'}
+              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Spara bil'}
             </Button>
           </div>
         )}

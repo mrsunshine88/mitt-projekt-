@@ -35,14 +35,8 @@ export default function ConversationPage({ params }: { params: Promise<{ id: str
 
   const { data: conversation, isLoading: isConvoLoading } = useDoc<Conversation>(convoRef);
 
-  // Hämta bilens data för att veta vem som är säljare (ägare)
-  const carRef = useMemoFirebase(() => {
-    if (!db || !conversation?.carId) return null;
-    return doc(db, 'artifacts', appId, 'public', 'data', 'cars', conversation.carId);
-  }, [db, conversation?.carId, appId]);
-  const { data: car } = useDoc<any>(carRef);
-
-  const isSeller = car?.ownerId === user?.uid;
+  // Ny roll-logik: isSeller baseras på vem som var säljare när tråden skapades
+  const isSeller = conversation?.sellerId === user?.uid;
 
   const messagesRef = useMemoFirebase(() => {
     if (!db) return null;
@@ -73,7 +67,8 @@ export default function ConversationPage({ params }: { params: Promise<{ id: str
         needsUpdate = true;
       }
       
-      if (!conversation.transferCode) {
+      // Endast säljaren kan generera koden för tråden
+      if (isSeller && !conversation.transferCode) {
         updates.transferCode = Math.floor(100000 + Math.random() * 900000).toString();
         needsUpdate = true;
       }
@@ -86,7 +81,7 @@ export default function ConversationPage({ params }: { params: Promise<{ id: str
         });
       }
     }
-  }, [conversation, user, convoRef, id]);
+  }, [conversation, user, convoRef, id, isSeller]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -170,7 +165,7 @@ export default function ConversationPage({ params }: { params: Promise<{ id: str
         </div>
       </header>
 
-      {/* Överlåtelsekod-sektion: Endast säljaren ser koden */}
+      {/* Överlåtelsekod-sektion: Endast den specifika säljaren ser koden */}
       <div className={`py-4 px-4 border-b flex flex-col items-center justify-center gap-1 transition-colors ${isSeller ? 'bg-primary/10 border-primary/20' : 'bg-white/5 border-white/5'}`}>
         {isSeller ? (
           <>

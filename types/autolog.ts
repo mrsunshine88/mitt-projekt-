@@ -28,6 +28,8 @@ export interface VehicleLog {
   approvalStatus?: ApprovalStatus;
   createdAt: any;
   trustLevel?: TrustLevel;
+  licensePlate: string;
+  hasStoragePhoto?: boolean;
 }
 
 export interface Vehicle {
@@ -47,6 +49,8 @@ export interface Vehicle {
   description?: string;
   mainImage?: string; 
   imageUrls?: string[];
+  adMainImage?: string; // Unik annonsbild som inte rör profilbilden
+  adImageUrls?: string[]; // Unika annonsbilder
   publicShareId?: string;
   isPublished?: boolean;
   status?: VehicleStatus;
@@ -59,6 +63,7 @@ export interface Vehicle {
   updatedAt?: any;
   pendingTransferTo?: string | null; 
   pendingTransferFrom?: string | null; 
+  overallTrust?: TrustLevel;
 }
 
 export interface UserProfile {
@@ -82,6 +87,8 @@ export interface Conversation {
   participants: string[];
   participantNames: Record<string, string>;
   participantEmails?: Record<string, string>;
+  buyerId: string;
+  sellerId: string;
   carId: string;
   carTitle: string;
   carImageUrl: string;

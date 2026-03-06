@@ -66,7 +66,6 @@ export function LogEventDialog({
   const db = useFirestore();
   const appId = firebaseConfig.projectId;
 
-  // Admin Check
   const profileRef = useMemoFirebase(() => {
     if (!db || !user?.uid) return null;
     return doc(db, 'artifacts', appId, 'public', 'data', 'public_profiles', user.uid);
@@ -91,7 +90,6 @@ export function LogEventDialog({
   const isLowering = formData.odometer !== undefined && formData.odometer < currentOdometer;
   const isBelowFloor = formData.odometer !== undefined && formData.odometer < inspectionFloor;
   
-  // Ägare kan aldrig gå under golvet. Sänkning kräver bildbevis (förutom för Admin/Verkstad).
   const isIllegalOdometer = !isAdmin && !isWorkshop && isLowering && (!photoUrl || isBelowFloor);
 
   useEffect(() => {
@@ -112,6 +110,45 @@ export function LogEventDialog({
       setIsCameraActive(false);
     }
   }, [isOpen, currentOdometer, inspectionFloor, initialData]);
+
+  useEffect(() => {
+    let stream: MediaStream | null = null;
+
+    const startCamera = async () => {
+      if (isCameraActive && videoRef.current) {
+        try {
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ 
+              video: { facingMode: { ideal: 'environment' } } 
+            });
+          } catch (e) {
+            stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          }
+          
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+          }
+        } catch (err: any) {
+          console.error("Camera error:", err);
+          const msg = err.name === 'NotReadableError' 
+            ? "Kameran används redan." 
+            : "Kunde inte starta kameran.";
+          toast({ variant: "destructive", title: "Kamerafel", description: msg });
+          setIsCameraActive(false);
+        }
+      }
+    };
+
+    if (isCameraActive) {
+      const timer = setTimeout(startCamera, 150);
+      return () => {
+        clearTimeout(timer);
+        if (stream) {
+          stream.getTracks().forEach(t => t.stop());
+        }
+      };
+    }
+  }, [isCameraActive, toast]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -138,17 +175,6 @@ export function LogEventDialog({
     }
   };
 
-  const startCamera = async () => {
-    setIsCameraActive(true);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-      if (videoRef.current) videoRef.current.srcObject = stream;
-    } catch (err) {
-      toast({ variant: "destructive", title: "Kamerafel" });
-      setIsCameraActive(false);
-    }
-  };
-
   const capturePhoto = async () => {
     if (!videoRef.current || !canvasRef.current) return;
     const context = canvasRef.current.getContext('2d');
@@ -156,9 +182,6 @@ export function LogEventDialog({
     canvasRef.current.height = videoRef.current.videoHeight;
     context?.drawImage(videoRef.current, 0, 0);
     const dataUri = canvasRef.current.toDataURL('image/jpeg');
-    if (videoRef.current.srcObject) {
-      (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
-    }
     await handleImageSelection(dataUri);
   };
 
@@ -182,6 +205,7 @@ export function LogEventDialog({
       nextServiceDate = format(addMonths(parseISO(formData.date), 12), 'yyyy-MM-dd');
     }
 
+    // Kritiskt: photoUrl skickas vidare för att laddas upp till Storage av anroparen
     onSubmit({ 
       ...formData, 
       photoUrl: photoUrl || undefined,
@@ -197,7 +221,7 @@ export function LogEventDialog({
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(o) => { if(!o) { if(videoRef.current?.srcObject) (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop()); onClose(); } }}>
+    <Dialog open={isOpen} onOpenChange={(o) => { if(!o) onClose(); }}>
       <DialogContent className="sm:max-w-[500px] glass-card border-white/10 rounded-[2rem] p-6 max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-2xl font-headline flex items-center gap-2">
@@ -225,7 +249,7 @@ export function LogEventDialog({
               <div className="relative aspect-video rounded-2xl overflow-hidden bg-black">
                 <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
                 <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-3 px-4">
-                  <Button variant="outline" onClick={() => setIsCameraActive(false)} className="bg-black/40 border-white/20">Avbryt</Button>
+                  <Button variant="outline" type="button" onClick={() => setIsCameraActive(false)} className="bg-black/40 border-white/20">Avbryt</Button>
                   <Button type="button" onClick={capturePhoto} className="bg-primary shadow-xl">Ta bild</Button>
                 </div>
               </div>
@@ -234,11 +258,11 @@ export function LogEventDialog({
                 <div className="relative w-full h-full flex items-center justify-center overflow-hidden rounded-xl">
                   <img src={photoUrl} alt="Bifogat dokument" className="max-h-full object-contain" />
                 </div>
-                <Button variant="ghost" size="sm" onClick={() => setPhotoUrl(null)} className="mt-2 h-8 text-[10px] uppercase font-bold tracking-widest">Byt bild</Button>
+                <Button variant="ghost" size="sm" type="button" onClick={() => setPhotoUrl(null)} className="mt-2 h-8 text-[10px] uppercase font-bold tracking-widest">Byt bild</Button>
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-3">
-                <Button type="button" variant="outline" onClick={startCamera} className="h-32 rounded-2xl border-2 border-dashed flex flex-col gap-2 bg-white/5 border-white/10 hover:border-primary/50 transition-all">
+                <Button type="button" variant="outline" onClick={() => setIsCameraActive(true)} className="h-32 rounded-2xl border-2 border-dashed flex flex-col gap-2 bg-white/5 border-white/10 hover:border-primary/50 transition-all">
                   <Camera className="w-6 h-6 text-primary" />
                   <span className="text-[10px] font-bold uppercase tracking-widest text-center">Fota Kvitto / Dokument</span>
                 </Button>

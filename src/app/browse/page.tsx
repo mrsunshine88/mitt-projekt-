@@ -211,10 +211,10 @@ export default function BrowseMarketplace() {
   );
 }
 
-function VehicleListItem({ vehicle }: { vehicle: any }) {
-  const displayImage = vehicle.mainImage || vehicle.imageUrl || (vehicle.imageUrls && vehicle.imageUrls[0]) || 'https://picsum.photos/seed/car/600/400';
+function VehicleListItem({ vehicle }: { vehicle: Vehicle }) {
+  // LOGIK FÖR BILDISOLERING: Prioritera annonsbilden
+  const displayImage = vehicle.adMainImage || vehicle.mainImage || 'https://picsum.photos/seed/car/600/400';
   
-  // Vi använder overallTrust om den finns, annars Brons
   const trust = TRUST_CONFIG[vehicle.overallTrust as keyof typeof TRUST_CONFIG] || TRUST_CONFIG.Bronze;
 
   return (

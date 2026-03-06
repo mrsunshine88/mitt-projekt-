@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useEffect } from 'react';
@@ -47,7 +46,7 @@ export function AcceptTransferDialog({ isOpen, onClose, vehicle }: { isOpen: boo
     setError(false);
 
     try {
-      // 1. Verifiera koden genom att leta upp konversationen
+      // 1. Verifiera koden genom att leta upp konversationen i rätt sökväg
       const convosRef = collection(db, 'artifacts', appId, 'public', 'data', 'conversations');
       const q = query(convosRef, where('carId', '==', normalizedPlate), where('participants', 'array-contains', user.uid));
       const snap = await getDocs(q);
@@ -64,14 +63,13 @@ export function AcceptTransferDialog({ isOpen, onClose, vehicle }: { isOpen: boo
       const batch = writeBatch(db);
       
       // 2. Uppdatera det globala registret med den nya ägaren
-      // KRITISKT: Vi låser nu golvet till det aktuella miltalet vid köptillfället
       const vehicleUpdate = {
         ownerId: user.uid,
         ownerName: user.displayName || 'Bilägare',
         ownerEmail: user.email,
         pendingTransferTo: null,
         pendingTransferFrom: null,
-        inspectionFloorOdometer: vehicle.currentOdometerReading, // Låser mätaren för nya ägaren
+        inspectionFloorOdometer: vehicle.currentOdometerReading, 
         updatedAt: serverTimestamp(),
         isPublished: false 
       };

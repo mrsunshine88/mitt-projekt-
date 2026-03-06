@@ -72,6 +72,21 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
 
   const isOwner = user?.uid === vehicle?.ownerId;
 
+  // LOGIK FÖR BILDISOLERING:
+  // Vi prioriterar adImageUrls framför de vanliga imageUrls.
+  const images = useMemo(() => {
+    if (vehicle?.adImageUrls && vehicle.adImageUrls.length > 0) {
+      return vehicle.adImageUrls;
+    }
+    if (vehicle?.adMainImage) {
+      return [vehicle.adMainImage];
+    }
+    if (vehicle?.imageUrls && vehicle.imageUrls.length > 0) {
+      return vehicle.imageUrls;
+    }
+    return [vehicle?.mainImage || "https://picsum.photos/seed/car/800/600"];
+  }, [vehicle]);
+
   const handleContactSeller = async () => {
     if (!user) {
       router.push('/login');
@@ -87,22 +102,25 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
       const q = query(
         convosRef,
         where('carId', '==', plate),
-        where('participants', 'array-contains', user.uid)
+        where('buyerId', '==', user.uid),
+        where('sellerId', '==', vehicle.ownerId)
       );
       
       const snap = await getDocs(q);
-      const existing = snap.docs.find(d => d.data().participants.includes(vehicle.ownerId));
 
-      if (existing) {
-        router.push(`/inbox/${existing.id}`);
+      if (!snap.empty) {
+        router.push(`/inbox/${snap.docs[0].id}`);
         return;
       }
 
       const carTitle = `${vehicle.make} ${vehicle.model}`;
-      const carImageUrl = vehicle.mainImage || (vehicle.imageUrls && vehicle.imageUrls[0]) || 'https://picsum.photos/seed/car/200/200';
+      // Använd annonsbilden i chatten om den finns
+      const carImageUrl = vehicle.adMainImage || vehicle.mainImage || 'https://picsum.photos/seed/car/200/200';
 
       const newConvo = await addDoc(convosRef, {
         participants: [user.uid, vehicle.ownerId],
+        buyerId: user.uid,
+        sellerId: vehicle.ownerId,
         participantNames: {
           [user.uid]: currentUserProfile?.name || user.displayName || 'Köpare',
           [vehicle.ownerId]: vehicle.ownerName || 'Säljare'
@@ -136,8 +154,6 @@ export default function PublicVehicleAdView({ params }: { params: Promise<{ id: 
       <Button asChild><a href="/browse">Till marknadsplatsen</a></Button>
     </div>
   );
-
-  const images = vehicle?.imageUrls && vehicle.imageUrls.length > 0 ? vehicle.imageUrls : [vehicle?.mainImage || "https://picsum.photos/seed/car/800/600"];
 
   return (
     <div className="min-h-screen bg-background pb-24">

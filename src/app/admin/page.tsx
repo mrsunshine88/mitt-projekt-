@@ -3,7 +3,7 @@
 
 import { useState, useMemo } from 'react';
 import { useUser, useFirestore, useCollection, useMemoFirebase, useDoc } from '@/firebase';
-import { collection, doc, deleteDoc, updateDoc, setDoc, writeBatch, getDoc, query, where, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, deleteDoc, updateDoc, setDoc, writeBatch, getDoc, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -12,7 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, Trash2, ShieldAlert, UserCheck, RefreshCw, Star, Search, Shield, Car, ArrowRight, Ban, UserPlus, Maximize2 } from 'lucide-react';
+import { Loader2, Trash2, ShieldAlert, UserCheck, RefreshCw, Star, Search, Shield, Car, ArrowRight, Ban, UserPlus, Maximize2, AlertTriangle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { UserProfile, Vehicle } from '@/types/autolog';
 import { firebaseConfig } from '@/firebase/config';
@@ -33,6 +33,8 @@ export default function AdminPage() {
   const [plateSearch, setPlateSearch] = useState('');
   const [foundVehicle, setFoundVehicle] = useState<any>(null);
   const [searchingPlate, setSearchingPlate] = useState(false);
+  const [hardDeleteConfirm, setHardDeleteConfirm] = useState('');
+  const [isHardDeleting, setIsHardDeleting] = useState(false);
   
   const [personnelSearch, setPersonnelSearch] = useState('');
   const [searchedUserForPersonnel, setSearchedUserForPersonnel] = useState<UserProfile | null>(null);
@@ -87,7 +89,7 @@ export default function AdminPage() {
     setSearchedUserForPersonnel(null);
     try {
       const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'public_profiles'), where('email', '==', personnelSearch.trim().toLowerCase()));
-      const snap = await (await import('firebase/firestore')).getDocs(q);
+      const snap = await getDocs(q);
       if (!snap.empty) {
         setSearchedUserForPersonnel({ ...snap.docs[0].data(), id: snap.docs[0].id } as UserProfile);
       } else {
@@ -104,20 +106,61 @@ export default function AdminPage() {
       const carRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', req.licensePlate);
       const requestRef = doc(db, 'artifacts', appId, 'public', 'data', 'odometer_corrections', req.id);
 
-      // Uppdatera miltalet tyst i systemet utan att skapa en loggpost i historiken
       batch.update(carRef, {
         currentOdometerReading: req.requestedOdometer,
         inspectionFloorOdometer: req.requestedOdometer,
         updatedAt: serverTimestamp()
       });
 
-      // Vi tar bort ansökan när den är genomförd
       batch.delete(requestRef);
-      
       await batch.commit();
       toast({ title: "Mätare korrigerad!" });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Fel", description: err.message });
+    }
+  };
+
+  const handleHardDeleteVehicle = async (vehiclePlate: string) => {
+    if (!db || !isHuvudAdmin || hardDeleteConfirm !== 'RADERA') return;
+    setIsHardDeleting(true);
+    try {
+      const batch = writeBatch(db);
+      const plate = vehiclePlate.toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
+
+      // 1. Radera bilen från globala registret
+      batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate));
+
+      // 2. Radera annonsen
+      batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'public_listings', plate));
+
+      // 3. Radera historikposter
+      const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs');
+      const logsSnap = await getDocs(logsRef);
+      logsSnap.forEach(l => batch.delete(l.ref));
+
+      // 4. Radera konversationer kopplade till bilen
+      const convosRef = collection(db, 'artifacts', appId, 'public', 'data', 'conversations');
+      const convosQ = query(convosRef, where('carId', '==', plate));
+      const convosSnap = await getDocs(convosQ);
+      
+      for (const convoDoc of convosSnap.docs) {
+        // Radera alla meddelanden i konversationen
+        const msgsRef = collection(db, 'artifacts', appId, 'public', 'data', 'conversations', convoDoc.id, 'messages');
+        const msgsSnap = await getDocs(msgsRef);
+        msgsSnap.forEach(m => batch.delete(m.ref));
+        
+        // Radera själva konversationen
+        batch.delete(convoDoc.ref);
+      }
+
+      await batch.commit();
+      toast({ title: "Fordon och all tillhörande data raderad permanent." });
+      setFoundVehicle(null);
+      setHardDeleteConfirm('');
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Fel vid hård radering", description: err.message });
+    } finally {
+      setIsHardDeleting(false);
     }
   };
 
@@ -190,15 +233,56 @@ export default function AdminPage() {
                   </Button>
                 </form>
                 {foundVehicle && (
-                  <div className="mt-8 p-6 bg-white/5 rounded-[2rem] border border-white/5 animate-in fade-in slide-in-from-top-4 flex justify-between items-center">
-                    <div className="flex items-center gap-6">
-                      <div className="bg-white text-black font-bold px-6 py-2 rounded-xl text-2xl border-2 border-slate-300 font-mono shadow-xl shrink-0">{foundVehicle.licensePlate}</div>
-                      <div>
-                        <h3 className="text-xl font-bold">{foundVehicle.make} {foundVehicle.model}</h3>
-                        <p className="text-sm text-muted-foreground">Ägare: {foundVehicle.ownerName || 'Okänd'}</p>
+                  <div className="mt-8 p-6 bg-white/5 rounded-[2rem] border border-white/5 animate-in fade-in slide-in-from-top-4 space-y-6">
+                    <div className="flex flex-col md:flex-row justify-between items-center gap-6">
+                      <div className="flex items-center gap-6">
+                        <div className="bg-white text-black font-bold px-6 py-2 rounded-xl text-2xl border-2 border-slate-300 font-mono shadow-xl shrink-0">{foundVehicle.licensePlate}</div>
+                        <div>
+                          <h3 className="text-xl font-bold">{foundVehicle.make} {foundVehicle.model}</h3>
+                          <p className="text-sm text-muted-foreground">Ägare: {foundVehicle.ownerName || 'Okänd'}</p>
+                        </div>
+                      </div>
+                      <div className="flex gap-3">
+                        <Button asChild variant="outline" className="rounded-xl h-12 px-6"><Link href={`/dashboard/vehicle/${foundVehicle.licensePlate}?mode=admin`}>Hantera profil <ArrowRight className="ml-2 w-4 h-4" /></Link></Button>
+                        
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="destructive" className="h-12 px-6 rounded-xl font-bold">
+                              <Trash2 className="w-4 h-4 mr-2" /> Hård radering
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent className="glass-card border-white/10 rounded-[2.5rem] p-8">
+                            <AlertDialogHeader>
+                              <AlertDialogTitle className="text-2xl font-headline text-destructive flex items-center gap-2">
+                                <AlertTriangle className="w-6 h-6" /> Permanent radering
+                              </AlertDialogTitle>
+                              <AlertDialogDescription className="text-slate-300">
+                                Detta kommer att fysiskt radera fordonet, hela dess servicehistorik, alla annonsbilder och alla chattrådar kopplade till bilen. Detta kan inte ångras.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <div className="py-6 space-y-3">
+                              <Label className="text-xs uppercase font-bold opacity-60">Skriv RADERA för att låsa upp</Label>
+                              <Input 
+                                placeholder="RADERA" 
+                                value={hardDeleteConfirm} 
+                                onChange={(e) => setHardDeleteConfirm(e.target.value)} 
+                                className="h-14 text-center font-bold tracking-[0.3em] bg-white/5 rounded-xl border-destructive/20 focus:border-destructive" 
+                              />
+                            </div>
+                            <AlertDialogFooter className="gap-3">
+                              <AlertDialogCancel className="h-14 rounded-2xl" onClick={() => setHardDeleteConfirm('')}>Avbryt</AlertDialogCancel>
+                              <AlertDialogAction 
+                                onClick={() => handleHardDeleteVehicle(foundVehicle.licensePlate)} 
+                                disabled={hardDeleteConfirm !== 'RADERA' || isHardDeleting} 
+                                className="h-14 rounded-2xl bg-destructive hover:bg-destructive/90"
+                              >
+                                {isHardDeleting ? <Loader2 className="animate-spin" /> : 'Bekräfta total radering'}
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
                       </div>
                     </div>
-                    <Button asChild className="rounded-xl h-12 px-8"><Link href={`/dashboard/vehicle/${foundVehicle.licensePlate}?mode=admin`}>Hantera som Admin <ArrowRight className="ml-2 w-4 h-4" /></Link></Button>
                   </div>
                 )}
               </Card>
@@ -266,7 +350,7 @@ export default function AdminPage() {
                     placeholder="Ange användarens exakta e-post..." 
                     value={personnelSearch} 
                     onChange={(e) => setPersonnelSearch(e.target.value)}
-                    className="bg-white/5 h-12 rounded-xl"
+                    className="h-12 bg-white/5 rounded-xl"
                   />
                   <Button type="submit" disabled={isSearchingPersonnel} className="h-12 px-6 rounded-xl bg-accent text-black font-bold">
                     {isSearchingPersonnel ? <Loader2 className="animate-spin" /> : 'Sök Användare'}

@@ -9,8 +9,8 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2, Camera, X, ShieldCheck } from 'lucide-react';
-import { useFirestore } from '@/firebase';
-import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { useUser, useFirestore } from '@/firebase';
+import { doc, setDoc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { Vehicle } from '@/types/autolog';
 import Image from 'next/image';
@@ -43,6 +43,7 @@ const compressImage = (dataUri: string): Promise<string> => {
 export function PublishVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolean; onClose: () => void; vehicle: Vehicle; }) {
   const [loading, setLoading] = useState(false);
   const [previews, setPreviews] = useState<string[]>([]);
+  const [hasNewImages, setHasNewImages] = useState(false);
   const db = useFirestore();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -60,8 +61,6 @@ export function PublishVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boo
 
   useEffect(() => {
     if (vehicle && isOpen) {
-      // Om bilen INTE är publicerad (nyskapande av annons), töm pris och beskrivning
-      // Men behåll teknisk fordonsdata
       setFormData({
         price: vehicle.isPublished ? (vehicle.price || 0) : 0,
         description: vehicle.isPublished ? (vehicle.description || '') : '',
@@ -72,17 +71,19 @@ export function PublishVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boo
         lastInspection: vehicle.lastInspection || '',
       });
       
-      // Ladda in existerande annonsbilder om det är en redigering
-      if (vehicle.isPublished && vehicle.imageUrls) {
-        setPreviews(vehicle.imageUrls);
+      // Ladda in existerande annonsbilder om det är en redigering, annars visa inget
+      if (vehicle.isPublished && vehicle.adImageUrls) {
+        setPreviews(vehicle.adImageUrls);
       } else {
         setPreviews([]);
       }
+      setHasNewImages(false);
     }
   }, [vehicle, isOpen]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
+      setHasNewImages(true);
       const files = Array.from(e.target.files);
       files.forEach(file => {
         const reader = new FileReader();
@@ -106,9 +107,11 @@ export function PublishVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boo
       const userDoc = await getDoc(userProfileRef);
       const userData = userDoc.exists() ? userDoc.data() : {};
 
-      // Behåll existerande bild om inga nya valts
-      const finalMainImage = previews.length > 0 ? previews[0] : (vehicle.mainImage || "https://picsum.photos/seed/car/800/600");
-      const finalImageUrls = previews.length > 0 ? previews : (vehicle.imageUrls || [finalMainImage]);
+      // LOGIK FÖR BILDISOLERING:
+      // Om användaren har laddat upp nya bilder, spara dem som adMainImage.
+      // Annars, om det är en ny annons och inga bilder valts, lämna adMainImage tomt (fallback sköts i UI).
+      const finalAdMainImage = hasNewImages && previews.length > 0 ? previews[0] : (vehicle.adMainImage || null);
+      const finalAdImageUrls = hasNewImages && previews.length > 0 ? previews : (vehicle.adImageUrls || null);
 
       const listingData = sanitize({
         ...vehicle,
@@ -118,17 +121,34 @@ export function PublishVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boo
         ownerName: userData.name || "Säljare",
         ownerPhone: userData.phoneNumber || null,
         ownerEmail: userData.email || auth.currentUser.email,
-        mainImage: finalMainImage,
-        imageUrls: finalImageUrls,
+        // Vi sparar annonsbilderna i egna fält
+        adMainImage: finalAdMainImage,
+        adImageUrls: finalAdImageUrls,
         isPublished: true,
         updatedAt: serverTimestamp(),
       });
 
-      // Uppdatera alla register
+      // 1. Skapa/Uppdatera annonsen i public_listings
       await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'public_listings', plate), listingData);
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate), listingData, { merge: true });
+      
+      // 2. Uppdatera endast status i bilregistren, RÖR INTE mainImage (profilbilden)
+      const statusUpdate = sanitize({ 
+        isPublished: true, 
+        price: formData.price,
+        description: formData.description,
+        fuelType: formData.fuelType,
+        gearbox: formData.gearbox,
+        hp: formData.hp,
+        color: formData.color,
+        adMainImage: finalAdMainImage,
+        adImageUrls: finalAdImageUrls,
+        updatedAt: serverTimestamp() 
+      });
+
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate), statusUpdate);
+      
       const privateRef = doc(db, 'artifacts', appId, 'users', auth.currentUser.uid, 'vehicles', plate);
-      await setDoc(privateRef, { ...listingData, isPublished: true }, { merge: true });
+      await updateDoc(privateRef, statusUpdate);
       
       toast({ title: vehicle.isPublished ? "Annons ändrad!" : "Annons publicerad!" });
       onClose();
@@ -141,12 +161,12 @@ export function PublishVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boo
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="glass-card p-6 rounded-[2.5rem] sm:max-w-xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="glass-card p-6 rounded-[2.5rem] sm:max-w-xl max-h-[90vh] overflow-y-auto border-none">
         <DialogHeader>
           <DialogTitle className="text-2xl font-headline flex items-center gap-2">
             {vehicle.isPublished ? 'Redigera annons' : 'Publicera annons'} <ShieldCheck className="w-6 h-6 text-primary" />
           </DialogTitle>
-          <DialogDescription>Justera annonsens innehåll på Marknadsplatsen.</DialogDescription>
+          <DialogDescription>Justera annonsens innehåll. Dina profilbilder i garaget påverkas inte.</DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-6 pt-4">
@@ -191,19 +211,23 @@ export function PublishVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boo
             <Textarea 
               value={formData.description} 
               onChange={(e) => setFormData({...formData, description: e.target.value})} 
-              className="h-32 bg-white/5 rounded-xl" 
+              className="h-32 bg-white/5 rounded-xl border-white/10" 
               placeholder="Beskriv bilen för köparen..." 
               required 
             />
           </div>
 
           <div className="space-y-4">
-            <Label className="text-xs font-bold uppercase opacity-60">Annonsbilder (Ersätter bilens profilbild)</Label>
+            <Label className="text-xs font-bold uppercase opacity-60">Annonsbilder (Valfritt - faller tillbaka på profilbilden)</Label>
             <div className="grid grid-cols-5 gap-3">
               {previews.map((p, i) => (
                 <div key={i} className="aspect-square relative rounded-xl overflow-hidden border border-white/10 group">
                   <Image src={p} alt="Preview" fill className="object-cover" />
-                  <button type="button" onClick={() => setPreviews(previews.filter((_, idx) => idx !== i))} className="absolute top-1 right-1 bg-black/60 p-1 rounded-full"><X className="w-3 h-3 text-white" /></button>
+                  <button type="button" onClick={() => {
+                    const newPreviews = previews.filter((_, idx) => idx !== i);
+                    setPreviews(newPreviews);
+                    setHasNewImages(true);
+                  }} className="absolute top-1 right-1 bg-black/60 p-1 rounded-full"><X className="w-3 h-3 text-white" /></button>
                 </div>
               ))}
               {previews.length < 5 && (
@@ -216,7 +240,7 @@ export function PublishVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boo
             <input type="file" ref={fileInputRef} className="hidden" multiple accept="image/*" onChange={handleImageChange} />
           </div>
 
-          <DialogFooter className="gap-3">
+          <DialogFooter className="gap-3 pt-4">
             <Button variant="ghost" type="button" onClick={onClose} className="rounded-xl flex-1">Avbryt</Button>
             <Button type="submit" disabled={loading} className="rounded-xl flex-[2] font-bold text-lg shadow-xl shadow-primary/20">
               {loading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : (vehicle.isPublished ? "Ändra annons" : "Publicera annons")}

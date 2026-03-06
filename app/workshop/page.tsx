@@ -1,8 +1,10 @@
+
 "use client";
 
 import { useState, useMemo, useEffect } from 'react';
-import { useUser, useFirestore, useMemoFirebase, useDoc, useCollection } from '@/firebase';
+import { useUser, useFirestore, useMemoFirebase, useDoc, useCollection, useStorage } from '@/firebase';
 import { collection, doc, getDoc, getDocs, setDoc, deleteDoc, writeBatch, serverTimestamp, query, where, addDoc } from 'firebase/firestore';
+import { ref, uploadString } from 'firebase/storage';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -19,6 +21,7 @@ import { useRouter } from 'next/navigation';
 export default function WorkshopPage() {
   const { user, isUserLoading } = useUser();
   const db = useFirestore();
+  const storage = useStorage();
   const { toast } = useToast();
   const router = useRouter();
   const appId = firebaseConfig.projectId;
@@ -91,19 +94,21 @@ export default function WorkshopPage() {
       const q = query(
         convosRef,
         where('carId', '==', vehicle.id),
-        where('participants', 'array-contains', user.uid)
+        where('buyerId', '==', user.uid),
+        where('sellerId', '==', vehicle.ownerId)
       );
       
       const snap = await getDocs(q);
-      const existing = snap.docs.find(d => d.data().participants.includes(vehicle.ownerId));
 
-      if (existing) {
-        router.push(`/inbox/${existing.id}`);
+      if (!snap.empty) {
+        router.push(`/inbox/${snap.docs[0].id}`);
         return;
       }
 
       const newConvo = await addDoc(convosRef, {
         participants: [user.uid, vehicle.ownerId],
+        buyerId: user.uid,
+        sellerId: vehicle.ownerId,
         participantNames: {
           [user.uid]: profile?.name || 'Verkstad',
           [vehicle.ownerId]: vehicle.ownerName || 'Bilägare'
@@ -129,12 +134,27 @@ export default function WorkshopPage() {
   };
 
   const handleLogSubmit = async (newLog: Partial<VehicleLog>) => {
-    if (!user || !vehicle || !db) return;
+    if (!user || !vehicle || !db || !storage) return;
+    setLoading(true);
     try {
       const plate = vehicle.licensePlate.toUpperCase().replace(/[^A-Z0-9]/g, '');
       const batch = writeBatch(db);
       
+      // Skapa ID för loggen i förväg så vi kan använda det för Storage-sökvägen
+      const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs');
+      const logId = editingLog?.id || doc(logsRef).id;
+      const logDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs', logId);
+
+      // Kritiskt: Om bild finns, ladda upp till Storage och ta bort Base64 från Firestore-objektet
+      let hasStoragePhoto = false;
+      if (newLog.photoUrl && newLog.photoUrl.startsWith('data:')) {
+        const storageRef = ref(storage, `receipts/${plate}/${logId}`);
+        await uploadString(storageRef, newLog.photoUrl, 'data_url');
+        hasStoragePhoto = true;
+      }
+
       const logData = {
+        id: logId,
         vehicleId: plate,
         licensePlate: plate,
         ownerId: vehicle.ownerId || null,
@@ -145,57 +165,48 @@ export default function WorkshopPage() {
         odometer: newLog.odometer,
         cost: newLog.cost || null,
         notes: newLog.notes || '',
-        photoUrl: newLog.photoUrl || null,
+        hasStoragePhoto: hasStoragePhoto,
         isVerified: newLog.isVerified || false,
         approvalStatus: 'pending',
         verificationSource: newLog.verificationSource || 'Workshop',
-        createdAt: serverTimestamp(),
+        createdAt: editingLog ? (editingLog.createdAt || serverTimestamp()) : serverTimestamp(),
+        updatedAt: serverTimestamp(),
       };
 
-      if (editingLog && editingLog.id) {
-        const logRef = doc(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs', editingLog.id);
-        batch.update(logRef, { 
-          ...logData, 
-          updatedAt: serverTimestamp() 
-        });
-      } else {
-        const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs');
-        const newLogRef = doc(logsRef);
-        batch.set(newLogRef, logData);
+      batch.set(logDocRef, logData, { merge: true });
+      
+      const customerRef = doc(db, 'artifacts', appId, 'public', 'data', 'workshops', user.uid, 'servicedCars', plate);
+      batch.set(customerRef, {
+        id: plate,
+        licensePlate: plate,
+        make: vehicle.make,
+        model: vehicle.model,
+        mainImage: vehicle.mainImage || null,
+        lastServicedAt: serverTimestamp()
+      }, { merge: true });
+
+      if (newLog.odometer && newLog.odometer > vehicle.currentOdometerReading) {
+        const vehicleRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate);
+        const vehicleUpdates: any = {
+          currentOdometerReading: newLog.odometer,
+          updatedAt: serverTimestamp(),
+        };
         
-        const customerRef = doc(db, 'artifacts', appId, 'public', 'data', 'workshops', user.uid, 'servicedCars', plate);
-        batch.set(customerRef, {
-          id: plate,
-          licensePlate: plate,
-          make: vehicle.make,
-          model: vehicle.model,
-          mainImage: vehicle.mainImage || null,
-          lastServicedAt: serverTimestamp()
-        }, { merge: true });
-
-        if (newLog.odometer && newLog.odometer > vehicle.currentOdometerReading) {
-          const vehicleRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate);
-          const vehicleUpdates: any = {
-            currentOdometerReading: newLog.odometer,
-            updatedAt: serverTimestamp(),
-          };
-          
-          if (newLog.category === 'Besiktning') {
-            vehicleUpdates.inspectionFloorOdometer = newLog.odometer;
-          }
-          
-          batch.update(vehicleRef, vehicleUpdates);
+        if (newLog.category === 'Besiktning') {
+          vehicleUpdates.inspectionFloorOdometer = newLog.odometer;
         }
+        
+        batch.update(vehicleRef, vehicleUpdates);
+      }
 
-        if (vehicle.ownerId) {
-          const notificationRef = doc(db, 'artifacts', appId, 'public', 'data', 'pending_approvals', `${plate}_${user.uid}`);
-          batch.set(notificationRef, {
-            ownerId: vehicle.ownerId,
-            plate: plate,
-            workshopId: user.uid,
-            createdAt: serverTimestamp()
-          });
-        }
+      if (vehicle.ownerId) {
+        const notificationRef = doc(db, 'artifacts', appId, 'public', 'data', 'pending_approvals', `${plate}_${user.uid}`);
+        batch.set(notificationRef, {
+          ownerId: vehicle.ownerId,
+          plate: plate,
+          workshopId: user.uid,
+          createdAt: serverTimestamp()
+        });
       }
       
       await batch.commit();
@@ -206,6 +217,8 @@ export default function WorkshopPage() {
     } catch (error: any) { 
       console.error("Fel vid spara:", error);
       toast({ variant: "destructive", title: "Fel", description: error.message }); 
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -216,22 +229,18 @@ export default function WorkshopPage() {
       const plate = vehicle.licensePlate.toUpperCase().replace(/[^A-Z0-9]/g, '');
       const batch = writeBatch(db);
       
-      // 1. Radera loggen
       const logRef = doc(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs', log.id);
       batch.delete(logRef);
       
-      // 2. Radera notisen om den finns
       try {
         const notificationRef = doc(db, 'artifacts', appId, 'public', 'data', 'pending_approvals', `${plate}_${user.uid}`);
         batch.delete(notificationRef);
       } catch (e) {}
 
-      // 3. Kolla om vi ska ta bort från "Mina hanterade fordon"
       const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs');
       const qLogs = query(logsRef, where('creatorId', '==', user.uid));
       const snap = await getDocs(qLogs);
       
-      // Om detta var den sista loggen (storleken är 1 eftersom vi inte committat deleten än), ta bort från listan
       if (snap.size <= 1) {
         const customerRef = doc(db, 'artifacts', appId, 'public', 'data', 'workshops', user.uid, 'servicedCars', plate);
         batch.delete(customerRef);
@@ -318,8 +327,9 @@ export default function WorkshopPage() {
                   <Button 
                     className="flex-[2] h-20 text-xl font-bold rounded-2xl shadow-2xl shadow-primary/30" 
                     onClick={() => { setEditingLog(null); setIsLogDialogOpen(true); }}
+                    disabled={loading}
                   >
-                    <ShieldCheck className="w-8 h-8 mr-3" /> Registrera ny händelse
+                    {loading ? <Loader2 className="w-8 h-8 animate-spin" /> : <ShieldCheck className="w-8 h-8 mr-3" />} Registrera ny händelse
                   </Button>
                   {vehicle.ownerId && (
                     <Button 
@@ -409,7 +419,7 @@ function RealtimeHistoryList({ licensePlate, appId, currentUserId, onEdit, onDel
   const { data: logs, isLoading } = useCollection<VehicleLog>(logsQuery);
   const sortedLogs = useMemo(() => logs ? [...logs].sort((a, b) => (b.date || '').localeCompare(a.date || '')) : [], [logs]);
   
-  if (isLoading) return <div className="flex justify-center py-10"><Loader2 className="animate-spin h-8 w-8 text-primary opacity-20" /></div>;
+  if (isLoading) return <div className="flex justify-center py-10"><Loader2 className="animate-spin h-8 w-8 text-primary" /></div>;
   
   return (
     <div className="space-y-4">
