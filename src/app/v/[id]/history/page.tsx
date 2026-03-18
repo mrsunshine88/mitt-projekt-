@@ -10,7 +10,7 @@ import { HistoryList, calculateOverallTrust, TRUST_CONFIG } from '@/components/h
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, History, ShieldCheck, Gauge, Calendar, Palette, Zap, Loader2, Share2, Check } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
 
 export default function VehicleHistoryPage({ params }: { params: Promise<{ id: string }> }) {
@@ -23,6 +23,8 @@ export default function VehicleHistoryPage({ params }: { params: Promise<{ id: s
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const appId = firebaseConfig.projectId;
+  const searchParams = useSearchParams();
+  const isFromDashboard = searchParams.get('from') === 'dashboard';
 
   useEffect(() => {
     async function fetchVehicle() {
@@ -85,7 +87,14 @@ export default function VehicleHistoryPage({ params }: { params: Promise<{ id: s
   return (
     <div className="min-h-screen bg-background py-8">
       <div className="container max-w-4xl mx-auto px-4">
-        <div className="flex justify-end items-center mb-8">
+        <div className="flex justify-between items-center mb-8">
+          {isFromDashboard ? (
+            <Button variant="ghost" onClick={() => router.push(`/dashboard/vehicle/${vehicle?.licensePlate}`)} className="text-slate-400 hover:text-white px-0 hover:bg-transparent">
+              <ArrowLeft className="w-5 h-5 mr-2" /> Tillbaka
+            </Button>
+          ) : (
+            <div />
+          )}
           <Button variant="outline" size="sm" onClick={handleCopyLink} className="rounded-full bg-white/5 border-white/10 px-6 font-bold h-10">
             {copied ? <Check className="w-4 h-4 mr-2 text-green-500" /> : <Share2 className="w-4 h-4 mr-2 text-primary" />}
             Dela historik

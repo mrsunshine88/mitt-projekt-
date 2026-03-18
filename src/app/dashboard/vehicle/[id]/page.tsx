@@ -497,7 +497,7 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
                 )}
                 <div className="h-px bg-white/5 my-2" />
                 <Button variant="outline" className="w-full h-14 rounded-2xl font-bold border-primary/20 text-primary" onClick={handleCopyLink}>{copied ? <Check className="mr-2 w-5 h-5 text-green-500" /> : <Share2 className="mr-2 w-5 h-5" />} Dela historik</Button>
-                <Button variant="outline" className="w-full h-14 rounded-2xl font-bold border-white/10" asChild><Link href={`/v/${plate}/history`}><HistoryIcon className="mr-2 w-5 h-5" /> Se all historik</Link></Button>
+                <Button variant="outline" className="w-full h-14 rounded-2xl font-bold border-white/10" asChild><Link href={`/v/${plate}/history?from=dashboard`}><HistoryIcon className="mr-2 w-5 h-5" /> Se all historik</Link></Button>
                 {isAdminContext && isHuvudAdmin && (
                   <>
                     <div className="h-px bg-white/5 my-2" />

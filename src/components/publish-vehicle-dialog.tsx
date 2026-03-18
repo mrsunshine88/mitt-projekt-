@@ -150,6 +150,7 @@ export function PublishVehicleDialog({
         adImageUrls: finalAdImageUrls,
         isPublished: true,
         overallTrust: currentTrust,
+        lastListedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
 

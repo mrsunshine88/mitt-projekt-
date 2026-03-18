@@ -129,9 +129,17 @@ export function TransferOwnershipDialog({ isOpen, onClose, vehicle }: { isOpen: 
       // 2. Kontrollera om användaren har raderat/dolt chatten
       const isHidden = c.hiddenFrom?.includes(user.uid);
       
+      // 3. Tidsmaskinen: Dölj chattar som är äldre än den senaste marknadsplats-publiceringen
+      const lastListedAt = (vehicle as any).lastListedAt?.toDate ? (vehicle as any).lastListedAt.toDate() : null;
+      if (lastListedAt && c.updatedAt?.toDate) {
+        if (c.updatedAt.toDate() < lastListedAt) {
+          return false;
+        }
+      }
+      
       return !isHidden && buyerName.includes(searchQuery.toLowerCase());
     });
-  }, [rawConversations, user, searchQuery]);
+  }, [rawConversations, user, searchQuery, vehicle]);
 
   const handleInitiate = async () => {
     if (!user || !db || !selectedBuyerConvo || !vehicle) return;
@@ -168,7 +176,7 @@ export function TransferOwnershipDialog({ isOpen, onClose, vehicle }: { isOpen: 
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => { if(!open) { reset(); onClose(); } }}>
+    <Dialog open={isOpen} onOpenChange={(open: boolean) => { if(!open) { reset(); onClose(); } }}>
       <DialogContent className="sm:max-w-[480px] glass-card border-white/10 text-foreground rounded-[2.5rem] p-0 overflow-hidden flex flex-col h-[90vh] sm:h-auto sm:max-h-[85vh]">
         <div className="p-8 pb-4">
           <DialogHeader>

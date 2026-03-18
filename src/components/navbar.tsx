@@ -50,14 +50,14 @@ export function Navbar() {
       collection(db, 'artifacts', appId, 'public', 'data', 'pending_approvals'),
       where('ownerId', '==', user.uid)
     );
-    const unsub1 = onSnapshot(pendingQuery, (snap) => setHasPendingApprovals(!snap.empty));
+    const unsub1 = onSnapshot(pendingQuery, (snap) => setHasPendingApprovals(!snap.empty), (e) => console.warn('PendingQuery error:', e));
 
     // 2. Lyssna efter inkommande bilöverlåtelser (för köpare)
     const transferQuery = query(
       collection(db, 'artifacts', appId, 'public', 'data', 'cars'),
       where('pendingTransferTo', '==', user.uid)
     );
-    const unsub2 = onSnapshot(transferQuery, (snap) => setHasPendingTransfers(!snap.empty));
+    const unsub2 = onSnapshot(transferQuery, (snap) => setHasPendingTransfers(!snap.empty), (e) => console.warn('TransferQuery error:', e));
 
     // 3. Lyssna efter verkstadsnotiser (för verkstad)
     let unsub3 = () => {};
@@ -69,7 +69,7 @@ export function Navbar() {
       );
       unsub3 = onSnapshot(workshopNotifQuery, (snap) => {
         setUnreadWorkshopNotifs(snap.size);
-      });
+      }, (e) => console.warn('WorkshopNotifQuery error:', e));
     }
 
     // 4. Lyssna efter miltalsansökningar (för admin)
@@ -81,7 +81,7 @@ export function Navbar() {
       );
       unsub4 = onSnapshot(correctionsQuery, (snap) => {
         setPendingCorrectionsCount(snap.size);
-      });
+      }, (e) => console.warn('CorrectionsQuery error:', e));
     }
 
     return () => { 

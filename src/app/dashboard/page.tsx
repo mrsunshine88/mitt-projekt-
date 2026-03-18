@@ -2,9 +2,9 @@
 "use client";
 
 import { useState, useMemo } from 'react';
-import { useUser, useFirestore, useCollection, useMemoFirebase } from '@/firebase';
+import { useUser, useFirestore, useCollection, useMemoFirebase, useDoc } from '@/firebase';
 import { collection, query, where, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { Vehicle } from '@/types/autolog';
+import { Vehicle, UserProfile } from '@/types/autolog';
 import { Loader2, Plus, RefreshCw, Car, ShieldCheck, ShoppingCart, ArrowRight, X } from 'lucide-react';
 import { AddVehicleDialog } from '@/components/add-vehicle-dialog';
 import { AcceptTransferDialog } from '@/components/accept-transfer-dialog';
@@ -25,6 +25,12 @@ export default function Dashboard() {
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [isAcceptOpen, setIsAcceptOpen] = useState(false);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+
+  const userProfileRef = useMemoFirebase(() => {
+    if (!db || !user?.uid) return null;
+    return doc(db, 'artifacts', appId, 'public', 'data', 'public_profiles', user.uid);
+  }, [db, user?.uid, appId]);
+  const { data: profile } = useDoc<UserProfile>(userProfileRef);
 
   // 1. Mina egna bilar - Hämtas direkt från det globala registret baserat på ägarskap
   const myVehiclesQuery = useMemoFirebase(() => {
@@ -88,7 +94,14 @@ export default function Dashboard() {
           <h1 className="text-4xl font-headline font-bold text-white">Mina bilar</h1>
           <p className="text-muted-foreground">Klicka på en bil för att se profil och historik</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3 items-center">
+          {profile?.userType !== 'Workshop' && (
+            <Button asChild variant="outline" className="h-14 px-8 rounded-2xl border-white/10 font-bold bg-white/5 text-slate-300 hover:text-white hover:bg-white/10 transition-colors">
+              <Link href="/workshops">
+                🔍 Sök Verkstad
+              </Link>
+            </Button>
+          )}
           <Button variant="outline" size="icon" onClick={() => window.location.reload()} className="h-14 rounded-2xl bg-white/5 border-white/10"><RefreshCw className="w-5 h-5" /></Button>
           <Button onClick={() => setIsAddDialogOpen(true)} className="h-14 px-8 rounded-2xl font-bold shadow-xl shadow-primary/20"><Plus className="mr-2 w-6 h-6" /> Lägg till bil</Button>
         </div>

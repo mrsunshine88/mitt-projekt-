@@ -25,7 +25,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { PublishVehicleDialog } from '@/components/publish-vehicle-dialog';
-
+import { testAiConnection } from '@/ai/flows/test-connection';
 export default function AdminPage() {
   const { user, isUserLoading } = useUser();
   const db = useFirestore();
@@ -268,7 +268,7 @@ export default function AdminPage() {
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
         <div className="w-full relative">
-          <TabsList className="bg-white/5 border border-white/10 p-1 flex flex-nowrap w-full overflow-x-auto hide-scrollbar snap-x snap-mandatory rounded-2xl">
+          <TabsList className="bg-white/5 border border-white/10 p-1 flex flex-nowrap w-full overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] snap-x snap-mandatory rounded-2xl">
             {canUsers && <TabsTrigger value="users" className="shrink-0 px-6 whitespace-nowrap snap-center rounded-xl">Användare</TabsTrigger>}
             
             {canVehicles && <TabsTrigger value="vehicles" className="shrink-0 px-6 whitespace-nowrap snap-center rounded-xl">Fordon</TabsTrigger>}
@@ -281,7 +281,6 @@ export default function AdminPage() {
             </TabsTrigger>
           )}
           
-          {canMarketplace && <TabsTrigger value="listings" className="flex-1 rounded-xl">Marknadsplats</TabsTrigger>}
           {canMarketplace && <TabsTrigger value="listings" className="shrink-0 px-6 whitespace-nowrap snap-center rounded-xl">Marknadsplats</TabsTrigger>}
           {canForum && <TabsTrigger value="forum" className="shrink-0 px-6 whitespace-nowrap snap-center rounded-xl">Forum Moderering</TabsTrigger>}
           
@@ -1079,7 +1078,16 @@ function DeepSystemScan() {
       let opCount = 0;
       const _commit = async () => { if (opCount > 0) { await batch.commit(); batch = writeBatch(db); opCount = 0; } };
 
-      appendLog('> Steg 1: Fordonsdatabas & Mätargolv...');
+      appendLog('> Steg 1: Testar AI-infrastruktur & API-nycklar...');
+      const aiTest = await testAiConnection();
+      if (!aiTest.success) {
+        appendLog(`  -> [VARNING] AI-motorn är nere! Fel: ${aiTest.error}`);
+        appendLog(`  -> Tips: Kontrollera GEMINI_API_KEY (.env.local) och att modellen är tillgänglig.`);
+      } else {
+        appendLog(`  -> AI-motorn (Gemini 2.5 Flash) är ONLINE och krypterad uppkoppling upprättad.`);
+      }
+
+      appendLog('> Steg 2: Fordonsdatabas & Mätargolv...');
       let odometerFixes = 0;
       let carGuardFixes = 0;
       carsMap.forEach((car: any, plate: string) => {
@@ -1298,7 +1306,7 @@ function DeepSystemScan() {
         </p>
 
         {logs.length > 0 && (
-          <div className="bg-black/50 rounded-xl p-4 mb-6 h-48 overflow-y-auto font-mono text-[10px] sm:text-xs text-green-400 space-y-1">
+          <div className="bg-black/50 rounded-xl p-4 mb-6 h-48 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] font-mono text-[10px] sm:text-xs text-green-400 space-y-1">
             {logs.map((l, i) => <p key={i}>{l}</p>)}
           </div>
         )}

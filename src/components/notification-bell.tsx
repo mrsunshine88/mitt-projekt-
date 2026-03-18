@@ -28,7 +28,7 @@ export function NotificationBell() {
       const notifs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       notifs.sort((a: any, b: any) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
       setNotifications(notifs);
-    });
+    }, (err) => console.warn('NotificationBell snapshot error:', err));
     return () => unsub();
   }, [db, user?.uid, appId]);
 

@@ -34,9 +34,12 @@ export async function extractReceiptData(input: ExtractReceiptDataInput): Promis
 const extractReceiptDataPrompt = ai.definePrompt({
   name: 'extractReceiptDataPrompt',
   input: {schema: ExtractReceiptDataInputSchema},
-  model: 'googleai/gemini-1.5-flash',
+  model: 'googleai/gemini-2.5-flash',
   prompt: `Analysera detta fordonsdokument och extrahera data.
 Dokument: {{media url=receiptImageDataUri}}
+
+VIKTIGT OM MÄTARSTÄLLNING:
+Mätarställning ("odometerReading") MÅSTE konverteras till svenska MIL. Om det står i km i dokumentet (t.ex 191622 km), svara med 19162 (dela med 10, inga decimaler). Om du är osäker och det är mycket högt, utgå från att det är i km och konvertera till mil.
 
 Svara enbart med rå JSON-data i detta format (ingen markdown, ingen text före eller efter):
 {
@@ -67,7 +70,12 @@ const extractReceiptDataFlow = ai.defineFlow(
         return JSON.parse(cleanJson) as ExtractReceiptDataOutput;
       } catch (e: any) {
         attempts++;
-        if (attempts >= 2) throw new Error('AI-skanning misslyckades: ' + e.message);
+        if (attempts >= 2) {
+          if (e.message?.includes('429') || String(e).includes('429')) {
+            throw new Error('AI Server överbelastad (Kvot överskriden). Vänligen prova igen om en minut.');
+          }
+          throw new Error('AI-skanning misslyckades: ' + e.message);
+        }
         await new Promise(r => setTimeout(r, 1000));
       }
     }

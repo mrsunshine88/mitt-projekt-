@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
-import { Camera, Loader2, CheckCircle2, Upload, FileText, Lock } from 'lucide-react';
+import { AlertCircle, Camera, Loader2, CheckCircle2, Upload, FileText, Lock } from 'lucide-react';
 import { VehicleLog, ServiceCategory } from '@/types/autolog';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -16,6 +16,7 @@ import { addMonths, format, parseISO } from 'date-fns';
 import { useUser, useFirestore, useDoc, useMemoFirebase } from '@/firebase';
 import { firebaseConfig } from '@/firebase/config';
 import { doc } from 'firebase/firestore';
+import { extractReceiptData } from '@/ai/flows/extract-receipt-data';
 
 interface LogEventDialogProps {
   isOpen: boolean;
@@ -62,6 +63,11 @@ export function LogEventDialog({
   const [loading, setLoading] = useState(false);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [isVerifiedInspection, setIsVerifiedInspection] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [aiMessage, setAiMessage] = useState<{type: 'scanning' | 'success' | 'warning', title: string, desc: string} | null>(null);
+  const [aiLockedDate, setAiLockedDate] = useState(false);
+  const [isAiValidated, setIsAiValidated] = useState(false);
   const { user } = useUser();
   const db = useFirestore();
   const appId = firebaseConfig.projectId;
@@ -106,6 +112,11 @@ export function LogEventDialog({
           notes: '',
         });
         setPhotoUrl(null);
+        setIsVerifiedInspection(false);
+        setError(null);
+        setAiMessage(null);
+        setAiLockedDate(false);
+        setIsAiValidated(false);
       }
       setIsCameraActive(false);
     }
@@ -166,7 +177,39 @@ export function LogEventDialog({
     try {
       const optimized = await processImage(dataUri);
       setPhotoUrl(optimized);
-      toast({ title: "Dokument bifogat!" });
+      setAiMessage({ type: 'scanning', title: 'AI skannar dokument...', desc: 'Vänligen vänta medan vår AI läser in mätarställning, datum och summor från dokumentet.' });
+      
+      try {
+        const aiResult = await extractReceiptData({ receiptImageDataUri: optimized });
+        setFormData(prev => {
+          const updated = { ...prev };
+          if (aiResult.date) {
+            updated.date = aiResult.date;
+            setAiLockedDate(true);
+          }
+          if (aiResult.category) updated.category = aiResult.category;
+          if (aiResult.totalCost) updated.cost = aiResult.totalCost;
+          if (aiResult.odometerReading) {
+            updated.odometer = aiResult.odometerReading;
+          }
+          if (aiResult.serviceSummary) {
+            updated.notes = prev.notes ? `${prev.notes}\n\nAI Notering: ${aiResult.serviceSummary}` : `AI Notering: ${aiResult.serviceSummary}`;
+          }
+          return updated;
+        });
+        if (aiResult.isInspection) setIsVerifiedInspection(true);
+        setIsAiValidated(true);
+        setAiMessage({ type: 'success', title: 'AI Auto-ifyllt!', desc: 'Fälten fylldes i automatiskt. Kontrollera att allt stämmer innan du sparar.' });
+      } catch (aiError: any) {
+        console.error("AI scanning failed:", aiError);
+        const errorMsg = aiError.message || String(aiError);
+        if (errorMsg.includes('överbelastad') || errorMsg.includes('429')) {
+          setAiMessage(null);
+          setError("AI-motorn är för tillfället överbelastad (Google Maxkvot nådd för gratistjänsten). Vänligen vänta 60 sekunder och ladda upp bilden på nytt, eller fyll i fälten helt manuellt.");
+        } else {
+          setAiMessage({ type: 'warning', title: 'Bild bifogad!', desc: 'Den automatiska text-avläsningen misslyckades. Vänligen läs in uppgifterna manuellt från bilden.' });
+        }
+      }
     } catch (error) {
       toast({ variant: "destructive", title: "Fel vid bildbehandling" });
     } finally {
@@ -188,11 +231,24 @@ export function LogEventDialog({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    setError(null);
+
     if (!isAdmin) {
       if (isLowering) {
-        toast({ variant: "destructive", title: "Otillåten mätarställning", description: `Alla loggar, verkstadsbesök och besiktningar måste anges med en mätarställning som är lika med eller högre än nuvarande (${currentOdometer} mil). För att sänka mätaren, ansök om mätarsänkning via 'Redigera Info'.` });
+        setError(`Otillåten mätarställning: Loggar måste anges med en mätarställning som är lika med eller högre än nuvarande (${currentOdometer} mil). För att sänka mätaren, ansök om mätarsänkning.`);
         return;
       }
+    }
+
+    if (formData.category === 'Besiktning' && !isVerifiedInspection) {
+      setError("Obligatoriskt Bevis: För att logga en besiktning MÅSTE du ladda upp ett giltigt besiktningspapper som vår AI godkänner.");
+      return;
+    }
+
+    const requiresPhoto = !['Egen Service', 'Ägarbyte'].includes(formData.category || '');
+    if (requiresPhoto && !photoUrl) {
+      setError(`Obligatoriskt Bevis: Du måste fota eller bifoga ett kvitto/dokument för att logga ${formData.category}. Bara 'Egen Service' tillåts utan kvitto.`);
+      return;
     }
 
     setLoading(true);
@@ -202,17 +258,24 @@ export function LogEventDialog({
         nextServiceDate = format(addMonths(parseISO(formData.date), 12), 'yyyy-MM-dd');
       }
 
-      await onSubmit({ 
-        ...formData, 
-        photoUrl: photoUrl || undefined,
-        // @ts-ignore
-        nextServiceDate,
+      const submitPayload: Partial<VehicleLog> = {
+        ...formData,
         type: isWorkshop ? 'Proposal' : (isLowering ? 'Correction' : 'Update'),
         approvalStatus: isWorkshop ? 'pending' : 'approved',
         isVerified: !!photoUrl, 
-        verificationSource: isWorkshop ? 'Workshop' : (photoUrl ? 'AI' : 'User'),
+        verificationSource: isWorkshop ? 'Workshop' : (isAiValidated ? 'AI' : 'User'),
         performedBy: isWorkshop ? 'Workshop' : 'Owner'
-      });
+      };
+
+      if (nextServiceDate) {
+        (submitPayload as any).nextServiceDate = nextServiceDate;
+      }
+
+      if (photoUrl) {
+        submitPayload.photoUrl = photoUrl;
+      }
+
+      await onSubmit(submitPayload);
       onClose();
     } catch (err) {
       console.error("Submit error:", err);
@@ -222,7 +285,7 @@ export function LogEventDialog({
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(o) => { if(!o) onClose(); }}>
+    <Dialog open={isOpen} onOpenChange={(o: boolean) => { if(!o) onClose(); }}>
       <DialogContent className="sm:max-w-[500px] glass-card border-white/10 rounded-[2rem] p-6 max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-2xl font-headline flex items-center gap-2">
@@ -244,6 +307,26 @@ export function LogEventDialog({
           </Alert>
         )}
 
+        {error && (
+          <Alert className="mb-4 bg-orange-500/10 border-orange-500/30 text-orange-200">
+            <AlertCircle className="h-5 w-5 text-orange-400" />
+            <div className="ml-2">
+              <AlertTitle className="text-sm font-bold text-orange-400 mb-1">Valideringsfel</AlertTitle>
+              <AlertDescription className="text-xs leading-relaxed">{error}</AlertDescription>
+            </div>
+          </Alert>
+        )}
+
+        {aiMessage && (
+          <Alert className={`mb-4 ${aiMessage.type === 'success' ? 'bg-green-500/10 border-green-500/30' : aiMessage.type === 'warning' ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-blue-500/10 border-blue-500/30'}`}>
+            {aiMessage.type === 'success' ? <CheckCircle2 className="h-5 w-5 text-green-400" /> : aiMessage.type === 'warning' ? <AlertCircle className="h-5 w-5 text-yellow-400" /> : <Loader2 className="h-5 w-5 text-blue-400 animate-spin" />}
+            <div className="ml-2">
+              <AlertTitle className={`text-sm font-bold mb-1 ${aiMessage.type === 'success' ? 'text-green-400' : aiMessage.type === 'warning' ? 'text-yellow-400' : 'text-blue-400'}`}>{aiMessage.title}</AlertTitle>
+              <AlertDescription className={`text-xs leading-relaxed ${aiMessage.type === 'success' ? 'text-green-400/80' : aiMessage.type === 'warning' ? 'text-yellow-400/80' : 'text-blue-400/80'}`}>{aiMessage.desc}</AlertDescription>
+            </div>
+          </Alert>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-6 pt-4">
           <div className="space-y-4">
             {isCameraActive ? (
@@ -259,17 +342,21 @@ export function LogEventDialog({
                 <div className="relative w-full h-full flex items-center justify-center overflow-hidden rounded-xl">
                   <img src={photoUrl} alt="Bifogat dokument" className="max-h-full object-contain" />
                 </div>
-                <Button variant="ghost" size="sm" type="button" onClick={() => setPhotoUrl(null)} className="mt-2 h-8 text-[10px] uppercase font-bold tracking-widest">Byt bild</Button>
+                <Button variant="ghost" size="sm" type="button" onClick={() => { setPhotoUrl(null); setIsVerifiedInspection(false); setAiLockedDate(false); setAiMessage(null); setIsAiValidated(false); }} className="mt-2 h-8 text-[10px] uppercase font-bold tracking-widest">Byt bild</Button>
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-3">
                 <Button type="button" variant="outline" onClick={() => setIsCameraActive(true)} className="h-32 rounded-2xl border-2 border-dashed flex flex-col gap-2 bg-white/5 border-white/10 hover:border-primary/50 transition-all">
                   <Camera className="w-6 h-6 text-primary" />
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-center">Fota Kvitto / Dokument</span>
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-center">
+                    {formData.category === 'Besiktning' ? 'Fota Besiktningspapper' : 'Fota Kvitto / Dokument'}
+                  </span>
                 </Button>
                 <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()} className="h-32 rounded-2xl border-2 border-dashed flex flex-col gap-2 bg-white/5 border-white/10 hover:border-accent/50 transition-all">
                   <Upload className="w-6 h-6 text-accent" />
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-center">Välj från enhet</span>
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-center">
+                    {formData.category === 'Besiktning' ? 'Välj Besiktningspapper' : 'Välj från enhet'}
+                  </span>
                 </Button>
                 <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileChange} />
               </div>
@@ -279,7 +366,7 @@ export function LogEventDialog({
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label className="text-xs uppercase opacity-60">Kategori</Label>
-              <Select value={formData.category} onValueChange={(v) => setFormData({...formData, category: v as ServiceCategory})}>
+              <Select value={formData.category} onValueChange={(v: string) => setFormData({...formData, category: v as ServiceCategory})}>
                 <SelectTrigger className="h-12 bg-white/5 rounded-xl border-white/10">
                   <SelectValue />
                 </SelectTrigger>
@@ -289,13 +376,15 @@ export function LogEventDialog({
                   <SelectItem value="Däck">Däck</SelectItem>
                   <SelectItem value="Besiktning">Besiktning</SelectItem>
                   <SelectItem value="Uppgradering">Uppgradering</SelectItem>
+                  <SelectItem value="Egen Service">Egen Service</SelectItem>
                   <SelectItem value="Ägarbyte">Ägarbyte</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
               <Label className="text-xs uppercase opacity-60">Datum</Label>
-              <Input type="date" value={formData.date} className="h-12 bg-white/5 rounded-xl border-white/10" onChange={(e) => setFormData({...formData, date: e.target.value})} />
+              <Input type="date" disabled={aiLockedDate} value={formData.date} className={`h-12 bg-white/5 rounded-xl border-white/10 ${aiLockedDate ? 'opacity-50 cursor-not-allowed' : ''}`} onChange={(e) => setFormData({...formData, date: e.target.value})} />
+              {aiLockedDate && <span className="text-[10px] text-green-400 font-bold block mt-1 absolute">Datumet är låst av AI-avläsning.</span>}
             </div>
           </div>
 

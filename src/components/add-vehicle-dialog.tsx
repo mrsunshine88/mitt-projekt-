@@ -14,6 +14,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { SWEDISH_CAR_BRANDS } from '@/constants/car-brands';
 import { firebaseConfig } from '@/firebase/config';
 import { sanitize } from '@/lib/utils';
+import { verifyVehiclePlate } from '@/ai/flows/verify-vehicle-plate';
 
 type Step = 'info' | 'confirm-odometer' | 'photo-choice' | 'camera' | 'ready';
 
@@ -45,8 +46,10 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
   const [processingImage, setProcessingImage] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [inspectionDoc, setInspectionDoc] = useState<string | null>(null);
   const [existingHistoryFound, setExistingHistoryFound] = useState(false);
   const [isSearchingPlate, setIsSearchingPlate] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
   
   const { user } = useUser();
   const db = useFirestore();
@@ -143,17 +146,60 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
     }
   }, [step]);
 
+  const processPhoto = async (dataUri: string) => {
+    setProcessingImage(true);
+    try {
+      const optimized = await processImage(dataUri);
+      
+      const shouldAiScan = isScanning;
+      
+      if (shouldAiScan && formData.licensePlate) {
+        toast({ title: "AI Granskar dokument...", description: "Detta tar upp till 6 sekunder. Lämna inte rutan." });
+        try {
+          const result = await verifyVehiclePlate({ photoDataUri: optimized, expectedPlate: formData.licensePlate });
+          
+          if (!result.isInspectionDocument) {
+            setError(result.reasoning !== 'Kort förklaring' && result.reasoning ? result.reasoning : "Dokumentet verkar inte vara ett giltigt Besiktningsprotokoll.");
+            setStep('info');
+            return;
+          }
+
+          if (result.match) {
+            toast({ title: "Dokument Godkänt!", description: `Reg-nr matchar. ${result.odometer ? `Avläst miltal: ${result.odometer} mil` : ''}` });
+            setInspectionDoc(optimized);
+            setError(null);
+            if (result.odometer && result.odometer >= (formData.currentOdometerReading || 0)) {
+               setFormData(prev => ({ ...prev, currentOdometerReading: result.odometer! }));
+            }
+            setStep('info');
+          } else {
+             setError(result.reasoning || `Reg-numret på dokumentet stämmer ej överens med ${formData.licensePlate}.`);
+             setStep('info');
+          }
+        } catch (e) {
+          setError("AI kunde inte läsa dokumentet ordentligt. Försök att ta en tydligare bild.");
+          setStep('info');
+        }
+      } else {
+        setPhotoPreview(optimized);
+        setStep('ready');
+      }
+    } catch (e) {
+      toast({ variant: "destructive", title: "Fel", description: "Behandlingen av bilden misslyckades."});
+      setStep(isScanning ? 'info' : 'photo-choice');
+    } finally {
+      setIsScanning(false);
+      setProcessingImage(false);
+    }
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setProcessingImage(true);
     const reader = new FileReader();
     reader.onload = async (event) => {
       const dataUri = event.target?.result as string;
-      const optimized = await processImage(dataUri);
-      setPhotoPreview(optimized);
-      setProcessingImage(false);
-      setStep('ready');
+      await processPhoto(dataUri);
     };
     reader.readAsDataURL(file);
   };
@@ -162,14 +208,11 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
     if (!videoRef.current || !canvasRef.current) return;
     const context = canvasRef.current.getContext('2d');
     if (!context) return;
-    setProcessingImage(true);
     canvasRef.current.width = videoRef.current.videoWidth;
     canvasRef.current.height = videoRef.current.videoHeight;
     context.drawImage(videoRef.current, 0, 0);
-    const optimized = await processImage(canvasRef.current.toDataURL('image/jpeg', 0.8));
-    setPhotoPreview(optimized);
-    setProcessingImage(false);
-    setStep('ready');
+    const dataUri = canvasRef.current.toDataURL('image/jpeg', 0.8);
+    await processPhoto(dataUri);
   };
 
   const handleSubmit = async () => {
@@ -193,7 +236,7 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
           setLoading(false);
           return;
         }
-        finalFloor = existingData.inspectionFloorOdometer || finalFloor;
+        finalFloor = Math.max(existingData.inspectionFloorOdometer || 0, existingData.currentOdometerReading || 0) || finalFloor;
         finalCurrent = existingData.currentOdometerReading || finalCurrent;
       }
 
@@ -233,12 +276,14 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
     setFormData({ licensePlate: '', make: '', model: '', year: new Date().getFullYear(), currentOdometerReading: 0 }); 
     setStep('info'); 
     setPhotoPreview(null); 
+    setInspectionDoc(null);
     setError(null);
     setExistingHistoryFound(false);
+    setIsScanning(false);
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(o) => { if(!o) resetForm(); onClose(); }}>
+    <Dialog open={isOpen} onOpenChange={(o: boolean) => { if(!o) resetForm(); onClose(); }}>
       <DialogContent className="sm:max-w-[450px] glass-card border-white/10 rounded-[2rem] p-0 overflow-hidden">
         <div className="p-6">
           <DialogHeader className="mb-4">
@@ -251,9 +296,12 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
           </DialogHeader>
 
           {error && (
-            <Alert variant="destructive" className="mb-4 bg-destructive/10 border-destructive/20">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription className="text-xs">{error}</AlertDescription>
+            <Alert className="mb-4 bg-orange-500/10 border-orange-500/30 text-orange-200">
+              <AlertCircle className="h-5 w-5 text-orange-400" />
+              <div className="ml-2">
+                <AlertTitle className="text-sm font-bold text-orange-400 mb-1">AI-Granskning</AlertTitle>
+                <AlertDescription className="text-xs leading-relaxed">{error}</AlertDescription>
+              </div>
             </Alert>
           )}
 
@@ -275,11 +323,19 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
                     />
                     {isSearchingPlate && <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 animate-spin opacity-40" />}
                   </div>
+                  {formData.licensePlate && !inspectionDoc && (
+                    <Button variant="outline" className="w-full text-white border-primary/50 border-2 border-dashed h-16 bg-primary/10 hover:bg-primary/20 hover:text-white" onClick={() => { setIsScanning(true); setStep('photo-choice'); }}>
+                      <Camera className="w-5 h-5 mr-3 text-primary animate-pulse" /> Obligatoriskt: Ladda upp besiktningspapper
+                    </Button>
+                  )}
+                  {inspectionDoc && (
+                     <div className="text-xs text-green-500 font-bold px-1 flex items-center justify-center gap-1.5 p-3 rounded-xl bg-green-500/10 border border-green-500/20"><CheckCircle2 className="w-4 h-4" /> AI: Besiktningsprotokoll Verifierat!</div>
+                  )}
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label className="text-xs font-bold uppercase opacity-60 ml-1">Märke</Label>
-                    <Select value={formData.make} onValueChange={(v) => setFormData({...formData, make: v})}>
+                    <Select value={formData.make} onValueChange={(v: string) => setFormData({...formData, make: v})}>
                       <SelectTrigger className="h-12 bg-white/5"><SelectValue placeholder="Välj..." /></SelectTrigger>
                       <SelectContent className="max-h-[300px]">{SWEDISH_CAR_BRANDS.map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}</SelectContent>
                     </Select>
@@ -310,7 +366,7 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
                     </div>
                   </div>
                 </div>
-                <Button onClick={() => setStep('confirm-odometer')} className="w-full h-14 rounded-2xl font-bold text-lg mt-4" disabled={!formData.licensePlate || !formData.make || isSearchingPlate || !!error}>
+                <Button onClick={() => setStep('confirm-odometer')} className="w-full h-14 rounded-2xl font-bold text-lg mt-4" disabled={!formData.licensePlate || !formData.make || isSearchingPlate || !!error || !inspectionDoc}>
                   Gå vidare <ArrowRight className="ml-2 w-5 h-5" />
                 </Button>
               </div>
@@ -336,7 +392,7 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
                   </AlertDescription>
                 </Alert>
                 <div className="flex flex-col gap-3">
-                  <Button onClick={() => setStep('photo-choice')} className="h-16 rounded-2xl font-bold text-xl shadow-xl shadow-primary/20">Ja, det stämmer</Button>
+                  <Button onClick={() => setStep(photoPreview ? 'ready' : 'photo-choice')} className="h-16 rounded-2xl font-bold text-xl shadow-xl shadow-primary/20">Ja, det stämmer</Button>
                   {!existingHistoryFound && <Button variant="ghost" onClick={() => setStep('info')} className="h-12">Nej, ändra värdet</Button>}
                 </div>
               </div>

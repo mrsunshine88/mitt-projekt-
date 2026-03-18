@@ -42,10 +42,26 @@ export const calculateTrustLevel = (log: VehicleLog): TrustLevel => {
     
     if (!isValid(sysDate) || !isValid(eventDate)) return 'Bronze';
     
+    // Obekräftade inlägg (t.ex. Egen Service utan kvitto) blir direkt Brons
+    if (log.verificationSource === 'User' && !log.isVerified) {
+      return 'Bronze';
+    }
+
+    // Ägarbyte är en administrativ systemhändelse och bör inte späda ut CarGuard-status till Guld
+    if (log.category === 'Ägarbyte') {
+      return 'Silver';
+    }
+
     const diffDays = Math.abs(differenceInDays(sysDate, eventDate));
 
-    // Guld-zon: 0–7 dagar (Realtid)
-    if (diffDays <= 7) return 'Gold';
+    // Guld-zon: 0–7 dagar (Kräver Workshop eller AI-bevis)
+    if (diffDays <= 7) {
+      if (log.verificationSource === 'Workshop' || log.verificationSource === 'AI') {
+        return 'Gold';
+      }
+      return 'Silver';
+    }
+    
     // Silver-zon: 8–90 dagar (Godkänd efterhandsregistrering)
     if (diffDays <= 90) return 'Silver';
     // Brons-zon: > 90 dagar (Osäker historik)
@@ -243,6 +259,9 @@ export function HistoryList({ logs, showPrivateData = false, onEdit, onDelete, o
                         ) : (
                           <span className="text-xl">{trust.emoji}</span>
                         )}
+                        {log.isRetroactive && (
+                          <Badge variant="outline" className="text-[10px] font-black uppercase border-orange-500/50 text-orange-500 bg-orange-500/10 px-2 h-5 shadow-lg">Efterregistrerad</Badge>
+                        )}
                       </div>
                       <div className="flex items-center gap-3">
                         <p className="text-[10px] text-muted-foreground font-black uppercase tracking-[0.15em] flex items-center gap-1.5">
@@ -253,9 +272,13 @@ export function HistoryList({ logs, showPrivateData = false, onEdit, onDelete, o
                           <Badge variant="outline" className="text-[9px] font-black uppercase text-primary border-primary/20 bg-primary/5 py-0 h-5">
                             <ShieldCheck className="w-3 h-3 mr-1" /> Verkstadshistorik
                           </Badge>
+                        ) : log.verificationSource === 'AI' && log.isVerified ? (
+                          <Badge variant="outline" className="text-[9px] font-black uppercase text-green-400 border-green-500/20 bg-green-500/10 py-0 h-5">
+                            <Check className="w-3 h-3 mr-1" /> AI-Verifierat Kvitto
+                          </Badge>
                         ) : (
                           <Badge variant="outline" className="text-[9px] font-black uppercase text-slate-400 border-white/10 bg-white/5 py-0 h-5">
-                            <User className="w-3 h-3 mr-1" /> Loggat av ägare
+                            <User className="w-3 h-3 mr-1" /> Loggat av ägare (Obekräftat)
                           </Badge>
                         )}
                       </div>

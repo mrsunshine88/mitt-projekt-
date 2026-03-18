@@ -9,11 +9,21 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
-import { Loader2, UserCircle, Camera, Upload, Trash2, Building2, Phone, Mail, FileText, MapPin, Globe } from 'lucide-react';
+import { Loader2, UserCircle, Camera, Upload, Trash2, Building2, Phone, Mail, FileText, MapPin, Globe, Clock } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { UserProfile } from '@/types/autolog';
 import { sanitize } from '@/lib/utils';
 import { firebaseConfig } from '@/firebase/config';
+
+const OPENING_HOURS_DAYS = [
+  { key: 'monday', label: 'Måndag' },
+  { key: 'tuesday', label: 'Tisdag' },
+  { key: 'wednesday', label: 'Onsdag' },
+  { key: 'thursday', label: 'Torsdag' },
+  { key: 'friday', label: 'Fredag' },
+  { key: 'saturday', label: 'Lördag' },
+  { key: 'sunday', label: 'Söndag' },
+];
 
 const processImage = (dataUri: string): Promise<string> => {
   return new Promise((resolve) => {
@@ -61,8 +71,19 @@ export default function ProfilePage() {
     email: '',
     organizationNumber: '',
     address: '',
+    postalCode: '',
+    city: '',
     website: '',
     description: '',
+    openingHours: {
+      monday: '',
+      tuesday: '',
+      wednesday: '',
+      thursday: '',
+      friday: '',
+      saturday: '',
+      sunday: '',
+    } as Record<string, string>,
   });
 
   useEffect(() => {
@@ -73,8 +94,19 @@ export default function ProfilePage() {
         email: profile.email || '',
         organizationNumber: profile.organizationNumber || '',
         address: profile.address || '',
+        postalCode: profile.postalCode || '',
+        city: profile.city || '',
         website: profile.website || '',
         description: profile.description || '',
+        openingHours: typeof profile.openingHours === 'object' ? profile.openingHours : {
+          monday: '',
+          tuesday: '',
+          wednesday: '',
+          thursday: '',
+          friday: '',
+          saturday: '',
+          sunday: '',
+        },
       });
       setPhotoPreview(profile.photoUrl || null);
     } else if (user) {
@@ -219,9 +251,11 @@ export default function ProfilePage() {
                       <Label className="text-[10px] opacity-50 uppercase font-bold tracking-wider flex items-center gap-2"><FileText className="w-3 h-3" /> Organisationsnummer</Label>
                       <p className="text-lg font-medium">{formData.organizationNumber || "Ej angivet"}</p>
                     </div>
-                    <div className="space-y-1.5">
+                    <div className="space-y-1.5 md:col-span-2">
                       <Label className="text-[10px] opacity-50 uppercase font-bold tracking-wider flex items-center gap-2"><MapPin className="w-3 h-3" /> Adress</Label>
-                      <p className="text-lg font-medium">{formData.address || "Ej angivet"}</p>
+                      <p className="text-lg font-medium">
+                        {formData.address ? `${formData.address}${formData.postalCode || formData.city ? ',' : ''} ${formData.postalCode} ${formData.city}`.trim() : "Ej angivet"}
+                      </p>
                     </div>
                     <div className="space-y-1.5 md:col-span-2">
                       <Label className="text-[10px] opacity-50 uppercase font-bold tracking-wider flex items-center gap-2"><Globe className="w-3 h-3" /> Webbplats</Label>
@@ -230,6 +264,21 @@ export default function ProfilePage() {
                           {formData.website}
                         </a>
                       ) : <p className="text-lg opacity-40">Ej angivet</p>}
+                    </div>
+                    <div className="space-y-1.5 md:col-span-2 mt-4">
+                      <Label className="text-[10px] opacity-50 uppercase font-bold tracking-wider flex items-center gap-2"><Clock className="w-3 h-3" /> Öppettider</Label>
+                      {typeof formData.openingHours === 'object' ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-1 mt-2 max-w-lg">
+                          {OPENING_HOURS_DAYS.map(day => (
+                            <div key={day.key} className="flex justify-between border-b border-white/5 pb-1">
+                              <span className="opacity-60">{day.label}</span>
+                              <span className="font-medium">{(formData.openingHours as any)[day.key] || "Stängt"}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-lg font-medium whitespace-pre-line">{formData.openingHours || "Ej angivet"}</p>
+                      )}
                     </div>
                   </>
                 )}
@@ -254,9 +303,43 @@ export default function ProfilePage() {
                       <Label className="text-xs font-bold uppercase opacity-60 ml-1">Organisationsnummer</Label>
                       <Input value={formData.organizationNumber} onChange={(e) => setFormData({...formData, organizationNumber: e.target.value})} className="h-12 bg-white/5 rounded-xl border-white/10" placeholder="123456-7890" />
                     </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label className="text-xs font-bold uppercase opacity-60 ml-1">Gatuadress</Label>
+                      <Input value={formData.address} onChange={(e) => setFormData({...formData, address: e.target.value})} className="h-12 bg-white/5 rounded-xl border-white/10" placeholder="Storgatan 1" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs font-bold uppercase opacity-60 ml-1">Postnummer</Label>
+                      <Input value={formData.postalCode} onChange={(e) => setFormData({...formData, postalCode: e.target.value})} className="h-12 bg-white/5 rounded-xl border-white/10" placeholder="123 45" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs font-bold uppercase opacity-60 ml-1">Ort</Label>
+                      <Input value={formData.city} onChange={(e) => setFormData({...formData, city: e.target.value})} className="h-12 bg-white/5 rounded-xl border-white/10" placeholder="Staden" />
+                    </div>
                     <div className="space-y-2">
                       <Label className="text-xs font-bold uppercase opacity-60 ml-1">Webbplats</Label>
                       <Input value={formData.website} onChange={(e) => setFormData({...formData, website: e.target.value})} className="h-12 bg-white/5 rounded-xl border-white/10" placeholder="www.verkstad.se" />
+                    </div>
+                    <div className="space-y-4 md:col-span-2 pt-4 border-t border-white/10 mt-4">
+                      <Label className="text-xs font-bold uppercase opacity-60 ml-1 flex items-center gap-2"><Clock className="w-4 h-4" /> Öppettider</Label>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {OPENING_HOURS_DAYS.map(day => (
+                          <div key={day.key} className="flex items-center gap-4 bg-white/5 p-1.5 rounded-xl">
+                             <Label className="w-24 font-medium text-sm ml-3">{day.label}</Label>
+                             <Input 
+                               value={(formData.openingHours as any)[day.key]} 
+                               onChange={(e) => setFormData({
+                                 ...formData, 
+                                 openingHours: { 
+                                   ...(typeof formData.openingHours === 'object' ? formData.openingHours : {}), 
+                                   [day.key]: e.target.value 
+                                 }
+                               })} 
+                               className="h-10 bg-black/20 border-none px-4" 
+                               placeholder="T.ex. 07:00-16:00/Stängt" 
+                             />
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </>
                 )}

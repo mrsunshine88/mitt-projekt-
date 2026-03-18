@@ -34,6 +34,9 @@ export default function ForumPage() {
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setPosts(data);
       setLoading(false);
+    }, (err) => {
+      console.warn('Forum posts snapshot error:', err);
+      setLoading(false);
     });
     return () => unsub();
   }, [db, appId]);

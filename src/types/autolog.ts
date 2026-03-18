@@ -1,4 +1,4 @@
-export type ServiceCategory = 'Service' | 'Reparation' | 'Däck' | 'Besiktning' | 'Uppgradering' | 'Ägarbyte';
+export type ServiceCategory = 'Service' | 'Reparation' | 'Däck' | 'Besiktning' | 'Uppgradering' | 'Ägarbyte' | 'Egen Service';
 export type FuelType = 'Bensin' | 'Diesel' | 'El' | 'Hybrid';
 export type GearboxType = 'Manuell' | 'Automat';
 export type VehicleStatus = 'private' | 'for-sale' | 'sold';
@@ -17,6 +17,7 @@ export interface VehicleLog {
   cost?: number;
   notes: string;
   isVerified: boolean;
+  isRetroactive?: boolean;
   isLocked?: boolean;
   verificationSource?: VerificationSource;
   performedBy?: PerformedBy;
@@ -91,8 +92,19 @@ export interface UserProfile {
   userType: 'CarOwner' | 'Workshop';
   organizationNumber?: string;
   address?: string;
+  postalCode?: string;
+  city?: string;
   website?: string;
   description?: string;
+  openingHours?: {
+    monday?: string;
+    tuesday?: string;
+    wednesday?: string;
+    thursday?: string;
+    friday?: string;
+    saturday?: string;
+    sunday?: string;
+  };
   role?: 'Admin' | 'Användare' | 'Huvudadmin' | 'Moderator'; // Keeping old roles for smooth migration
   permissions?: string[];
   createdAt: any;

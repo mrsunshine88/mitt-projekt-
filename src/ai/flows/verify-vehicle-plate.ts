@@ -14,11 +14,12 @@ const VerifyVehiclePlateInputSchema = z.object({
 export type VerifyVehiclePlateInput = z.infer<typeof VerifyVehiclePlateInputSchema>;
 
 const VerifyVehiclePlateOutputSchema = z.object({
-  isCar: z.boolean(),
-  licensePlate: z.string().nullable(),
-  confidence: z.number(),
-  match: z.boolean(),
-  reasoning: z.string(),
+  isInspectionDocument: z.boolean().catch(false),
+  licensePlate: z.string().nullable().catch(null),
+  odometer: z.number().nullable().catch(null),
+  confidence: z.number().catch(0),
+  match: z.boolean().optional(),
+  reasoning: z.string().optional(),
 });
 export type VerifyVehiclePlateOutput = z.infer<typeof VerifyVehiclePlateOutputSchema>;
 
@@ -29,18 +30,24 @@ export async function verifyVehiclePlate(input: VerifyVehiclePlateInput): Promis
 const platePrompt = ai.definePrompt({
   name: 'verifyVehiclePlatePrompt',
   input: {schema: VerifyVehiclePlateInputSchema},
-  model: 'googleai/gemini-1.5-flash',
-  prompt: `Identifiera registreringsskylten i bilden. Jämför med: {{{expectedPlate}}}
-Bild: {{media url=photoDataUri}}
+  model: 'googleai/gemini-2.5-flash',
+  prompt: `Granska följande dokument noggrant. Är detta ett svenskt Registreringsbevis eller ett Besiktningsprotokoll (t.ex från Besikta, Opus, Carspect, Bilprovningen etc)?
+Identifiera registreringsskylten och eventuell mätarställning (vägmätarställning/miltal). Förväntat reg-nr: {{{expectedPlate}}}
 
-Svara enbart med rå JSON:
+VIKTIGT OM ÄKTHET:
+1. Sätt "isInspectionDocument" till true BARA om det ser ut som ett officiellt utskrivet protokoll från ett riktigt besiktningsföretag (t.ex. Besikta, Opus, Carspect, DEKRA) eller Transportstyrelsen.
+2. AVVISA (sätt till false) alla handskrivna papper, enkla Word-utskrifter som saknar logotyper/tabell-struktur, eller försök till förfalskning där någon bara skrivit reg-nr och "Besikta". Ett riktigt protokoll innehåller besiktningsresultat, tabeller för bromsvärden/miljökontroll, datum och stationsinformation.
+3. Mätarställningen (odometer) MÅSTE konverteras till svenska MIL (1 mil = 10 km). Om det till exempel står "191622" (vilket oftast är i km på papperet), ska du svara med "19162". Dela värdet på 10 och avrunda nedåt till en helsiffra om du misstänker att det är angivet i km (vilket det är om det är 6 siffror).
+
+Svara ENBART med rå JSON enligt detta exakta format utan markdown över eller under:
 {
-  "isCar": boolean,
-  "licensePlate": string,
-  "confidence": number,
-  "match": boolean,
-  "reasoning": string
-}`,
+  "isInspectionDocument": true/false,
+  "licensePlate": "MJN072",
+  "odometer": 19162,
+  "confidence": 99,
+  "reasoning": "Kort förklaring"
+}
+Bild: {{media url=photoDataUri}}`,
 });
 
 const verifyVehiclePlateFlow = ai.defineFlow(
@@ -61,10 +68,12 @@ const verifyVehiclePlateFlow = ai.defineFlow(
       
       return {
         ...output,
-        match: aiPlate.includes(userPlate) || userPlate.includes(aiPlate)
+        match: aiPlate.includes(userPlate) || userPlate.includes(aiPlate),
+        odometer: output.odometer ? Number(output.odometer) : null
       };
-    } catch (e) {
-      return { isCar: false, licensePlate: null, confidence: 0, match: false, reasoning: 'Fel vid analys.' };
+    } catch (e: any) {
+      console.error("AI verifyVehiclePlate error:", e);
+      return { isInspectionDocument: false, licensePlate: null, odometer: null, confidence: 0, match: false, reasoning: `Fel vid AI-analys: ${e.message}` };
     }
   }
 );

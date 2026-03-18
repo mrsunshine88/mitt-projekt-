@@ -8,7 +8,7 @@ service cloud.firestore {
     }
 
     function isSuperAdmin() {
-      return isSignedIn() && request.auth.token.email == 'apersson508@gmail.com';
+      return isSignedIn() && 'email' in request.auth.token && request.auth.token.email == 'apersson508@gmail.com';
     }
 
     function isNotBanned() {
@@ -21,7 +21,7 @@ service cloud.firestore {
 
     function isForumBanned() {
       let profilePath = /databases/$(database)/documents/artifacts/studio-3405255876-f647c/public/data/public_profiles/$(request.auth.uid);
-      return exists(profilePath) && get(profilePath).data.get('isForumBanned', false) == true;
+      return exists(profilePath) ? get(profilePath).data.get('isForumBanned', false) == true : false;
     }
 
     function canPostInForum() {
@@ -32,8 +32,7 @@ service cloud.firestore {
       let profilePath = /databases/$(database)/documents/artifacts/studio-3405255876-f647c/public/data/public_profiles/$(request.auth.uid);
       return isSuperAdmin() || (
         isSignedIn() &&
-        exists(profilePath) && 
-        get(profilePath).data.role in ['Huvudadmin', 'Moderator', 'Admin']
+        exists(profilePath) ? get(profilePath).data.get('role', 'none') in ['Huvudadmin', 'Moderator', 'Admin'] : false
       );
     }
 
@@ -42,6 +41,9 @@ service cloud.firestore {
         allow read: if true;
         allow create: if isSignedIn() && isNotBanned();
         allow update: if isAdmin() || isOwner(resource.data.ownerId) || (
+          (!('ownerId' in resource.data) || resource.data.ownerId == null || resource.data.ownerId == "") &&
+          isOwner(request.resource.data.ownerId)
+        ) || (
           isSignedIn() && isNotBanned() && 
           resource.data.pendingTransferTo == request.auth.uid && 
           request.resource.data.ownerId == request.auth.uid
@@ -141,7 +143,7 @@ service cloud.firestore {
       }
 
       match /user_notifications/{notificationId} {
-        allow read: if isOwner(resource.data.userId);
+        allow read: if isSignedIn() && request.auth.uid == resource.data.userId;
         allow create: if isSignedIn();
         allow update, delete: if isOwner(resource.data.userId);
       }

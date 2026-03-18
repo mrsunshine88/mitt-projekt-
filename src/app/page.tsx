@@ -17,7 +17,7 @@ export default function Home() {
       <section className="relative py-20 md:py-32 overflow-hidden bg-gradient-to-b from-background to-secondary/20">
         <div className="container mx-auto px-4 relative z-10 text-center space-y-8">
           <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 border border-primary/20 text-primary text-sm font-bold animate-in fade-in slide-in-from-top-4 duration-1000">
-            <ShieldCheck className="w-4 h-4" /> Först på marknaden: Annons + Servicebok i ett
+            <ShieldCheck className="w-4 h-4" /> Nyhet: Nu 100% säkrad av Google Gemini AI
           </div>
           
           <h1 className="text-5xl md:text-8xl font-headline font-bold tracking-tight leading-tight">
@@ -25,7 +25,7 @@ export default function Home() {
           </h1>
           
           <p className="text-xl md:text-2xl text-muted-foreground font-body max-w-3xl mx-auto leading-relaxed">
-            Den smarta digitala annons och serviceboken som höjer din bils andrahandsvärde genom verifierad historik och mätarkontroll. Marknadens första plattform där din bilannons och historik talar samma språk.
+            Den smarta digitala annons och serviceboken som höjer din bils andrahandsvärde genom AI-säkrad historik och mätarkontroll. Marknadens första plattform med avancerad artificiell intelligens som omedelbart granskar och godkänner inlagda besiktningspapper åt dig.
           </p>
 
           <div className="flex flex-col sm:flex-row gap-4 justify-center pt-8">
@@ -67,7 +67,7 @@ export default function Home() {
           <div className="max-w-4xl mx-auto text-center space-y-6">
             <h2 className="text-3xl md:text-5xl font-headline font-bold">Varför välja AutoLog?</h2>
             <p className="text-lg text-muted-foreground">
-              Vi är den första tjänsten som integrerar bilens hela livscykel. Från verkstadens professionella stämplar till den dag du väljer att sälja bilen. Allt på ett ställe, säkrat med bildbevis och mätarkontroll.
+              Vi är den första tjänsten som integrerar bilens hela livscykel med inbyggd AI-säkerhet. Från verkstadens professionella stämplar till den dag du väljer att sälja bilen. All hantering granskas av artificiell intelligens, vilket sätter stopp för manipulerade mätarställningar och falska dokument.
             </p>
           </div>
         </div>
@@ -81,9 +81,9 @@ export default function Home() {
               <div className="h-14 w-14 rounded-2xl bg-primary/10 flex items-center justify-center text-primary shadow-inner">
                 <Gauge className="w-8 h-8" />
               </div>
-              <h3 className="text-2xl font-headline font-bold">Mätarsäkrad</h3>
+              <h3 className="text-2xl font-headline font-bold">AI-Mätarsäkrad</h3>
               <p className="text-muted-foreground leading-relaxed">
-                Vårt unika "besiktningsgolv" stoppar mätarfusk. Varje sänkning kräver verifierade bildbevis på officiella protokoll för att godkännas.
+                Vårt unika "besiktningsgolv" och inbyggda AI stoppar mätarfusk på några sekunder. Varje sänkning och besiktning kräver att vår AI läser in och godkänner officiella protokoll.
               </p>
             </div>
 
@@ -121,7 +121,13 @@ export default function Home() {
                 <div className="mt-1 h-6 w-6 rounded-full bg-green-500/20 flex items-center justify-center text-green-500 shrink-0">
                   <Smartphone className="w-3 h-3" />
                 </div>
-                <p className="text-lg">Fota kvitton och protokoll direkt vid verkstaden eller besiktningen.</p>
+                <p className="text-lg">Fota kvitton och protokoll direkt i mobilen vid verkstaden eller besiktningen.</p>
+              </div>
+              <div className="flex items-start gap-4">
+                <div className="mt-1 h-6 w-6 rounded-full bg-primary/20 flex items-center justify-center text-primary shrink-0">
+                  <ShieldCheck className="w-3 h-3" />
+                </div>
+                <p className="text-lg">AI granskar all dokumentation omgående och fyller automatiskt i datum, miltal och detaljer via bildigenkänning.</p>
               </div>
               <div className="flex items-start gap-4">
                 <div className="mt-1 h-6 w-6 rounded-full bg-green-500/20 flex items-center justify-center text-green-500 shrink-0">
