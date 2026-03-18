@@ -16,6 +16,17 @@ let auth: Auth;
 let storage: FirebaseStorage;
 
 export function initializeFirebase() {
+  if (typeof window === 'undefined') {
+    // Next.js prerendering during Netlify build.
+    // Vi skyddar initialiseringen så den inte kraschar bygget på servern!
+    return {
+      firebaseApp: null as unknown as FirebaseApp,
+      firestore: null as unknown as Firestore,
+      auth: null as unknown as Auth,
+      storage: null as unknown as FirebaseStorage,
+    };
+  }
+
   app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
   if (!db) {
