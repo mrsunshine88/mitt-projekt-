@@ -1,0 +1,159 @@
+
+"use client";
+
+import Link from 'next/link';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Gauge, ShieldCheck, Share2, ArrowRight, Car, Lock, Smartphone, Image as ImageIcon, Wrench, Search, Loader2 } from 'lucide-react';
+import Image from 'next/image';
+import { useUser } from '@/firebase';
+
+export default function Home() {
+  const { user, isUserLoading } = useUser();
+
+  return (
+    <div className="flex flex-col min-h-screen">
+      {/* Hero Section */}
+      <section className="relative py-20 md:py-32 overflow-hidden bg-gradient-to-b from-background to-secondary/20">
+        <div className="container mx-auto px-4 relative z-10 text-center space-y-8">
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 border border-primary/20 text-primary text-sm font-bold animate-in fade-in slide-in-from-top-4 duration-1000">
+            <ShieldCheck className="w-4 h-4" /> Först på marknaden: Annons + Servicebok i ett
+          </div>
+          
+          <h1 className="text-5xl md:text-8xl font-headline font-bold tracking-tight leading-tight">
+            AutoLog – Din digitala <span className="gradient-text">annons & servicebok</span>
+          </h1>
+          
+          <p className="text-xl md:text-2xl text-muted-foreground font-body max-w-3xl mx-auto leading-relaxed">
+            Den smarta digitala annons och serviceboken som höjer din bils andrahandsvärde genom verifierad historik och mätarkontroll. Marknadens första plattform där din bilannons och historik talar samma språk.
+          </p>
+
+          <div className="flex flex-col sm:flex-row gap-4 justify-center pt-8">
+            {isUserLoading ? (
+              <div className="h-16 flex items-center justify-center">
+                <Loader2 className="w-6 h-6 animate-spin text-primary opacity-20" />
+              </div>
+            ) : user ? (
+              <Button size="lg" className="rounded-full text-lg h-16 px-10 shadow-xl shadow-primary/20 group animate-in fade-in zoom-in duration-500" asChild>
+                <Link href="/dashboard">
+                  Gå till mitt garage <ArrowRight className="ml-2 group-hover:translate-x-1 transition-transform" />
+                </Link>
+              </Button>
+            ) : (
+              <div className="flex flex-col sm:flex-row gap-4 animate-in fade-in zoom-in duration-500">
+                <Button size="lg" className="rounded-full text-lg h-16 px-10 shadow-xl shadow-primary/20 group" asChild>
+                  <Link href="/login?mode=signup">
+                    Registrera dig idag <ArrowRight className="ml-2 group-hover:translate-x-1 transition-transform" />
+                  </Link>
+                </Button>
+                
+                <Button size="lg" className="rounded-full text-lg h-16 px-10 shadow-xl shadow-primary/20 group" asChild>
+                  <Link href="/browse">
+                    <Search className="w-5 h-5 mr-2" /> Utforska annonser
+                  </Link>
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Decorative Elements */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl -z-0" />
+      </section>
+
+      {/* Unique Proposition Section */}
+      <section className="py-24 bg-secondary/5 border-y border-white/5">
+        <div className="container mx-auto px-4">
+          <div className="max-w-4xl mx-auto text-center space-y-6">
+            <h2 className="text-3xl md:text-5xl font-headline font-bold">Varför välja AutoLog?</h2>
+            <p className="text-lg text-muted-foreground">
+              Vi är den första tjänsten som integrerar bilens hela livscykel. Från verkstadens professionella stämplar till den dag du väljer att sälja bilen. Allt på ett ställe, säkrat med bildbevis och mätarkontroll.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Feature Grid */}
+      <section className="py-24 bg-background">
+        <div className="container mx-auto px-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div className="p-8 glass-card rounded-3xl space-y-6 hover:scale-[1.02] transition-transform duration-300">
+              <div className="h-14 w-14 rounded-2xl bg-primary/10 flex items-center justify-center text-primary shadow-inner">
+                <Gauge className="w-8 h-8" />
+              </div>
+              <h3 className="text-2xl font-headline font-bold">Mätarsäkrad</h3>
+              <p className="text-muted-foreground leading-relaxed">
+                Vårt unika "besiktningsgolv" stoppar mätarfusk. Varje sänkning kräver verifierade bildbevis på officiella protokoll för att godkännas.
+              </p>
+            </div>
+
+            <div className="p-8 glass-card rounded-3xl space-y-6 hover:scale-[1.02] transition-transform duration-300 border-primary/20 bg-primary/5">
+              <div className="h-14 w-14 rounded-2xl bg-accent/10 flex items-center justify-center text-accent shadow-inner">
+                <Wrench className="w-8 h-8" />
+              </div>
+              <h3 className="text-2xl font-headline font-bold">Verkstadsstämplar</h3>
+              <p className="text-muted-foreground leading-relaxed">
+                Verkstäder kan lägga in låsta serviceposter med bifogade kvitton och bildbevis. En digital stämpel som köpare faktiskt kan lita på.
+              </p>
+            </div>
+
+            <div className="p-8 glass-card rounded-3xl space-y-6 hover:scale-[1.02] transition-transform duration-300">
+              <div className="h-14 w-14 rounded-2xl bg-primary/10 flex items-center justify-center text-primary shadow-inner">
+                <Share2 className="w-8 h-8" />
+              </div>
+              <h3 className="text-2xl font-headline font-bold">Integrerad Annons</h3>
+              <p className="text-muted-foreground leading-relaxed">
+                När det är dags att sälja förvandlas din verifierade servicebok till en kraftfull annons med en unik länk som visar bilens sanna värde.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Mobile-Ready Section */}
+      <section className="py-24 border-y border-white/5 bg-secondary/10">
+        <div className="container mx-auto px-4 grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
+          <div className="space-y-8">
+            <Badge className="bg-primary/20 text-primary border-none">100% Mobilanpassad</Badge>
+            <h2 className="text-4xl md:text-6xl font-headline font-bold leading-tight">Full kontroll direkt i mobilen</h2>
+            <div className="space-y-4">
+              <div className="flex items-start gap-4">
+                <div className="mt-1 h-6 w-6 rounded-full bg-green-500/20 flex items-center justify-center text-green-500 shrink-0">
+                  <Smartphone className="w-3 h-3" />
+                </div>
+                <p className="text-lg">Fota kvitton och protokoll direkt vid verkstaden eller besiktningen.</p>
+              </div>
+              <div className="flex items-start gap-4">
+                <div className="mt-1 h-6 w-6 rounded-full bg-green-500/20 flex items-center justify-center text-green-500 shrink-0">
+                  <Lock className="w-3 h-3" />
+                </div>
+                <p className="text-lg">Säkra ägarbyten med digitala koder – historiken följer med bilen automatiskt.</p>
+              </div>
+            </div>
+          </div>
+          
+          <div className="relative aspect-square max-w-md mx-auto lg:ml-auto">
+            <div className="absolute inset-0 bg-primary/20 rounded-full blur-[100px] animate-pulse" />
+            <div className="relative z-10 glass-card rounded-[3rem] p-4 border-2 border-white/10 shadow-2xl">
+              <Image 
+                src="https://picsum.photos/seed/mobile-dashboard/400/800" 
+                alt="AutoLog Mobil" 
+                width={400} 
+                height={800} 
+                className="rounded-[2.5rem] object-cover"
+                data-ai-hint="mobile app service book"
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <footer className="py-12 border-t border-white/5 bg-background">
+        <div className="container mx-auto px-4 text-center">
+          <p className="font-headline font-bold text-xl gradient-text mb-4">AutoLog</p>
+          <p className="text-sm text-muted-foreground">© 2026 AutoLog – Den ärliga vägen till en bättre bilaffär.</p>
+        </div>
+      </footer>
+    </div>
+  );
+}

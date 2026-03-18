@@ -1,0 +1,163 @@
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && request.auth.token.email == 'apersson508@gmail.com';
+    }
+
+    function isNotBanned() {
+      return isSuperAdmin() || !exists(/databases/$(database)/documents/artifacts/studio-3405255876-f647c/public/data/bannedUsers/$(request.auth.uid));
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId && isNotBanned();
+    }
+
+    function isForumBanned() {
+      let profilePath = /databases/$(database)/documents/artifacts/studio-3405255876-f647c/public/data/public_profiles/$(request.auth.uid);
+      return exists(profilePath) && get(profilePath).data.get('isForumBanned', false) == true;
+    }
+
+    function canPostInForum() {
+      return isSignedIn() && isNotBanned() && !isForumBanned();
+    }
+
+    function isAdmin() {
+      let profilePath = /databases/$(database)/documents/artifacts/studio-3405255876-f647c/public/data/public_profiles/$(request.auth.uid);
+      return isSuperAdmin() || (
+        isSignedIn() &&
+        exists(profilePath) && 
+        get(profilePath).data.role in ['Huvudadmin', 'Moderator', 'Admin']
+      );
+    }
+
+    match /artifacts/studio-3405255876-f647c/public/data {
+      match /cars/{licensePlate} {
+        allow read: if true;
+        allow create: if isSignedIn() && isNotBanned();
+        allow update: if isAdmin() || isOwner(resource.data.ownerId) || (
+          isSignedIn() && isNotBanned() && 
+          resource.data.pendingTransferTo == request.auth.uid && 
+          request.resource.data.ownerId == request.auth.uid
+        );
+        allow delete: if isAdmin();
+      }
+      
+      match /vehicleHistory/{licensePlate}/logs/{logId} {
+        allow read: if true;
+        allow create: if isSignedIn() && isNotBanned();
+        allow update: if isAdmin() || (
+          resource.data.category != 'Ägarbyte' && 
+          isOwner(resource.data.creatorId)
+        );
+        allow delete: if isAdmin() || (
+          resource.data.category != 'Ägarbyte' && (
+            isOwner(resource.data.creatorId) || 
+            (isOwner(resource.data.ownerId) && resource.data.approvalStatus == 'pending')
+          )
+        );
+      }
+
+      match /pending_approvals/{notificationId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && isNotBanned();
+        allow update, delete: if isAdmin() || isOwner(resource.data.ownerId) || isOwner(resource.data.workshopId) || resource == null;
+      }
+
+      match /workshop_notifications/{notificationId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn();
+        allow update, delete: if isAdmin() || isOwner(resource.data.workshopId) || resource == null;
+      }
+
+      match /public_listings/{listingId} {
+        allow read: if true;
+        allow create: if isSignedIn() && isNotBanned() && request.resource.data.ownerId == request.auth.uid;
+        allow update: if isAdmin() || isOwner(resource.data.ownerId);
+        allow delete: if isAdmin() || isOwner(resource.data.ownerId) || (
+          isSignedIn() && isNotBanned() && 
+          get(/databases/$(database)/documents/artifacts/studio-3405255876-f647c/public/data/cars/$(listingId)).data.pendingTransferTo == request.auth.uid
+        );
+      }
+
+      match /public_profiles/{userId} {
+        allow read: if true;
+        allow create: if isOwner(userId) || isAdmin();
+        allow update: if isAdmin() || (isOwner(userId) && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])));
+        allow delete: if isAdmin();
+      }
+
+      match /bannedUsers/{userId} {
+        allow read: if isSignedIn();
+        allow write: if isAdmin();
+      }
+
+      match /workshops/{workshopId} {
+        allow read: if true;
+        allow write: if isOwner(workshopId) || isAdmin();
+        match /servicedCars/{carId} {
+          allow read, write: if isSignedIn() && isNotBanned();
+        }
+      }
+
+      match /conversations/{conversationId} {
+        allow read: if isSignedIn() && (request.auth.uid in resource.data.participants || isAdmin());
+        allow list: if isSignedIn();
+        allow create: if isSignedIn() && isNotBanned();
+        allow update: if isSignedIn() && (request.auth.uid in resource.data.participants || isAdmin());
+        allow delete: if isAdmin();
+        
+        match /messages/{messageId} {
+          allow read: if isSignedIn();
+          allow create: if isSignedIn() && isNotBanned();
+          allow delete: if isAdmin();
+        }
+      }
+      
+      match /odometer_corrections/{id} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn();
+        allow delete: if isAdmin();
+      }
+      
+      match /forum_posts/{postId} {
+        allow read: if true;
+        allow create: if canPostInForum() && request.resource.data.authorId == request.auth.uid;
+        allow update: if isAdmin() || (canPostInForum() && resource.data.authorId == request.auth.uid) || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'commentCount', 'updatedAt']));
+        allow delete: if isAdmin() || isOwner(resource.data.authorId);
+      }
+
+      match /forum_comments/{commentId} {
+        allow read: if true;
+        allow create: if canPostInForum() && request.resource.data.authorId == request.auth.uid;
+        allow update: if isAdmin() || (canPostInForum() && resource.data.authorId == request.auth.uid) || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes']));
+        allow delete: if isAdmin() || isOwner(resource.data.authorId);
+      }
+
+      match /user_notifications/{notificationId} {
+        allow read: if isOwner(resource.data.userId);
+        allow create: if isSignedIn();
+        allow update, delete: if isOwner(resource.data.userId);
+      }
+      
+      match /admin_audit_logs/{logId} {
+        allow read: if isAdmin();
+        allow create: if isAdmin();
+        allow update, delete: if false;
+      }
+    }
+
+    match /artifacts/studio-3405255876-f647c/users/{userId} {
+      allow read, write: if isOwner(userId) || isAdmin();
+      match /{allPaths=**} {
+        allow read, write: if isOwner(userId) || isAdmin();
+      }
+    }
+  }
+}

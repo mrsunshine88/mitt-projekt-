@@ -1,0 +1,34 @@
+
+rules_version = '2';
+service cloud.storage {
+  match /b/{bucket}/o {
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.email == 'apersson508@gmail.com';
+    }
+
+    match /receipts/{plate}/{docId} {
+      // Fysisk blockering baserat på ownerId i Firestore
+      // Detta kräver att vi använder get() på Firestore-resursen
+      allow read: if isSignedIn() && (
+        isAdmin() ||
+        firestore.exists(/databases/(default)/documents/artifacts/studio-3405255876-f647c/public/data/vehicleHistory/$(plate)/logs/$(docId)) &&
+        (
+          firestore.get(/databases/(default)/documents/artifacts/studio-3405255876-f647c/public/data/vehicleHistory/$(plate)/logs/$(docId)).data.ownerId == request.auth.uid ||
+          firestore.get(/databases/(default)/documents/artifacts/studio-3405255876-f647c/public/data/vehicleHistory/$(plate)/logs/$(docId)).data.creatorId == request.auth.uid
+        )
+      );
+      
+      allow write, delete: if isSignedIn();
+    }
+
+    match /{allPaths=**} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+  }
+}

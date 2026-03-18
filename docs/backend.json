@@ -1,0 +1,140 @@
+{
+  "entities": {
+    "User": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "User",
+      "type": "object",
+      "description": "Represents a user account within the AutoLog application.",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "userType": { "type": "string", "enum": ["CarOwner", "Workshop"] },
+        "name": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "organizationNumber": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "email", "userType", "name", "createdAt"]
+    },
+    "Vehicle": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Vehicle",
+      "type": "object",
+      "description": "Represents a specific vehicle.",
+      "properties": {
+        "id": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "licensePlate": { "type": "string" },
+        "make": { "type": "string" },
+        "model": { "type": "string" },
+        "year": { "type": "number" },
+        "currentOdometerReading": { "type": "number" },
+        "publicShareId": { "type": "string" },
+        "isPublished": { "type": "boolean" },
+        "price": { "type": "number" },
+        "description": { "type": "string" },
+        "mainImage": { "type": "string" },
+        "imageUrls": { "type": "array", "items": { "type": "string" } },
+        "tires": { "type": "string" },
+        "lastInspection": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerId", "licensePlate", "make", "model", "currentOdometerReading", "createdAt"]
+    },
+    "BannedUser": {
+      "title": "BannedUser",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "bannedAt": { "type": "string", "format": "date-time" },
+        "bannedBy": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    "VehicleLog": {
+      "title": "VehicleLog",
+      "type": "object",
+      "properties": {
+        "vehicleId": { "type": "string" },
+        "licensePlate": { "type": "string" },
+        "creatorId": { "type": "string" },
+        "creatorName": { "type": "string" },
+        "category": { "type": "string" },
+        "eventDate": { "type": "string" },
+        "odometerReading": { "type": "number" },
+        "cost": { "type": "number" },
+        "notes": { "type": "string" },
+        "type": { "type": "string" },
+        "isVerifiedByWorkshop": { "type": "boolean" },
+        "documentProofUrls": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "type": "object",
+      "properties": {
+        "participants": { "type": "array", "items": { "type": "string" } },
+        "participantNames": { "type": "object" },
+        "carId": { "type": "string" },
+        "carTitle": { "type": "string" },
+        "lastMessage": { "type": "string" },
+        "transferCode": { "type": "string" }
+      }
+    }
+  },
+  "auth": {
+    "providers": ["password"]
+  },
+  "firestore": {
+    "structure": [
+      {
+        "path": "/users/{userId}",
+        "definition": { "entityName": "User", "description": "Private user profiles." }
+      },
+      {
+        "path": "/users/{userId}/vehicles/{vehicleId}",
+        "definition": { "entityName": "Vehicle", "description": "User's private garage." }
+      },
+      {
+        "path": "/public_profiles/{userId}",
+        "definition": { "entityName": "object", "description": "Public look-up profiles for name resolution." }
+      },
+      {
+        "path": "/workshops/{userId}",
+        "definition": { "entityName": "object", "description": "Registry of verified workshops." }
+      },
+      {
+        "path": "/bannedUsers/{userId}",
+        "definition": { "entityName": "BannedUser", "description": "Registry of banned users." }
+      },
+      {
+        "path": "/allVehicles/{licensePlate}",
+        "definition": { "entityName": "object", "description": "Global registry for ownership tracking." }
+      },
+      {
+        "path": "/vehicleHistory/{licensePlate}/logs/{logId}",
+        "definition": { "entityName": "VehicleLog", "description": "Permanent service history." }
+      },
+      {
+        "path": "/public_listings/{listingId}",
+        "definition": { "entityName": "Vehicle", "description": "Global marketplace listings." }
+      },
+      {
+        "path": "/conversations/{conversationId}",
+        "definition": { "entityName": "Conversation", "description": "Chat threads." }
+      },
+      {
+        "path": "/conversations/{conversationId}/messages/{messageId}",
+        "definition": { "entityName": "object", "description": "Individual chat messages." }
+      },
+      {
+        "path": "/admins/{email}",
+        "definition": { "entityName": "object", "description": "Registry of administrator emails." }
+      }
+    ]
+  }
+}
