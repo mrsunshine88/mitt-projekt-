@@ -113,16 +113,16 @@ export function Navbar() {
     <>
       {user && (
         <>
-          <Link href="/browse" className="text-sm font-bold text-slate-300 hover:text-white flex items-center gap-2 py-3 md:py-0 transition-colors">
+          <Link href="/browse" className="text-sm font-bold text-slate-300 hover:text-white flex items-center gap-2 py-3 md:py-0 transition-colors whitespace-nowrap">
             <Search className="w-4 h-4" /> Marknadsplats
           </Link>
           
-          <Link href="/forum" className="text-sm font-bold text-blue-400 hover:text-blue-300 flex items-center gap-2 py-3 md:py-0 transition-colors">
+          <Link href="/forum" className="text-sm font-bold text-blue-400 hover:text-blue-300 flex items-center gap-2 py-3 md:py-0 transition-colors whitespace-nowrap">
             <MessageSquare className="w-4 h-4" /> Forum
           </Link>
           
           {isWorkshop && (
-            <Link href="/workshop" className="text-sm font-bold text-blue-400 hover:text-blue-300 flex items-center gap-2 py-3 md:py-0 transition-colors relative">
+            <Link href="/workshop" className="text-sm font-bold text-blue-400 hover:text-blue-300 flex items-center gap-2 py-3 md:py-0 transition-colors relative whitespace-nowrap">
               <Wrench className="w-4 h-4" /> Verkstad
               {unreadWorkshopNotifs > 0 && (
                 <span className="absolute -top-1 -right-1 h-3 w-3 bg-red-500 rounded-full border-2 border-slate-900 animate-pulse" />
@@ -130,14 +130,14 @@ export function Navbar() {
             </Link>
           )}
 
-          <Link href="/dashboard" className="text-sm font-bold text-slate-300 hover:text-white flex items-center gap-2 py-3 md:py-0 transition-colors relative">
+          <Link href="/dashboard" className="text-sm font-bold text-slate-300 hover:text-white flex items-center gap-2 py-3 md:py-0 transition-colors relative whitespace-nowrap">
             <Car className="w-4 h-4" /> Mina bilar
             {(hasPendingApprovals || hasPendingTransfers) && (
               <span className="absolute -top-1 -right-1 h-2.5 w-2.5 bg-red-500 rounded-full border-2 border-slate-900 animate-pulse" />
             )}
           </Link>
 
-          <Link href="/inbox" className="text-sm font-bold text-slate-300 hover:text-white flex items-center gap-2 py-3 md:py-0 transition-colors relative">
+          <Link href="/inbox" className="text-sm font-bold text-slate-300 hover:text-white flex items-center gap-2 py-3 md:py-0 transition-colors relative whitespace-nowrap">
             <Inbox className="w-4 h-4" /> Inkorg
             {unreadCount > 0 && (
               <Badge className="absolute -top-1 -right-3 h-4 w-4 flex items-center justify-center p-0 bg-red-500 border-none text-[9px]">
@@ -146,16 +146,16 @@ export function Navbar() {
             )}
           </Link>
           
-          <Link href="/profile" className="text-sm font-bold text-slate-300 hover:text-white flex items-center gap-2 py-3 md:py-0 transition-colors">
+          <Link href="/profile" className="text-sm font-bold text-slate-300 hover:text-white flex items-center gap-2 py-3 md:py-0 transition-colors whitespace-nowrap">
             <UserCircle className="w-4 h-4" /> Mina sidor
           </Link>
 
-          <Link href="/carguard" className="text-sm font-bold text-primary hover:brightness-110 flex items-center gap-2 py-3 md:py-0 transition-colors">
+          <Link href="/carguard" className="text-sm font-bold text-primary hover:brightness-110 flex items-center gap-2 py-3 md:py-0 transition-colors whitespace-nowrap">
             <ShieldCheck className="w-4 h-4" /> CarGuard
           </Link>
           
           {isAdmin && (
-            <Link href="/admin" className="text-sm font-bold text-accent hover:brightness-110 flex items-center gap-2 py-3 md:py-0 relative transition-all">
+            <Link href="/admin" className="text-sm font-bold text-accent hover:brightness-110 flex items-center gap-2 py-3 md:py-0 relative transition-all whitespace-nowrap">
               <ShieldAlert className="w-4 h-4" /> Admin
               {pendingCorrectionsCount > 0 && (
                 <span className="absolute -top-1 -right-1 h-3 w-3 bg-red-500 rounded-full border-2 border-slate-900 animate-pulse shadow-lg" />

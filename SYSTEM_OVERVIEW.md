@@ -1,159 +1,97 @@
-# AutoLog / Mitt Projekt - Omfattande Teknisk Systemritning & Dokumentation
+# AutoLog - Enterprise Architecture & Technical Blueprint
 
-Detta dokument fungerar som den centrala "ritningen" (blueprint) för hela AutoLog-systemet. Syftet är att vara så 100% utförlig och tydlig att en ny utvecklare ska kunna förstå, underhålla och återskapa hela applikationen utifrån denna text ensam, utan att behöva gissa sig till detaljer eller akronymer.
-
----
-
-## 1. Introduktion & Målsättning
-AutoLog är en digital plattform och en "Trust-First"-tjänst för verifierad fordonshistorik, marknadsplats och fordonsgemenskap. Systemets huvuduppgift är att eliminera fusk (såsom mätarskruvning eller förfalskade serviceböcker) genom att digitalisera serviceprotokoll, integrera AI-baserad avläsning av pappersdokument, och låsa all historik kryptografiskt till användarnas identiteter. 
-
-Systemet vänder sig till två primära målgrupper:
-1. **Privata bilägare** (CarOwner) som vill dokumentera sin bils historik, chatta på forum, sälja eller köpa bilar.
-2. **Verkstäder** (Workshop) som vill certifiera utförda reparationer och servicearbeten elektroniskt på kundernas fordon.
+Detta dokument fungerar som den centrala arkitekturritningen för Autolog. Syftet är att ge en komplett teknisk överblick för seniora utvecklare, arkitekter och intressenter. Dokumentet förklarar inte bara *hur* systemet är uppbyggt, utan framförallt *varför* specifika arkitektoniska och säkerhetsmässiga beslut har fattats för att uppnå skalbarhet, datasäkerhet och en friktionsfri användarupplevelse.
 
 ---
 
-## 2. Teknisk Stack & Ramverk
-Systemet är byggt på en modern webbstack utan en traditionell databasserver i bakgrunden.
-- **Frontend / Ramverk:** Next.js version 15 (med App Router-arkitektur) mixat med React 19.
-- **Styling:** Tailwind CSS för design, kryddat med ShadCN UI och Radix UI för tillgängliga komponenter (Tabs, Modals, Dialogs, Dropdowns etc). 
-- **Ikoner:** Lucide React.
-- **Backend / Databas:** Firebase Firestore (NoSQL-databas). All kommunikation med databasen sker direkt från frontend via klient-SDK (`firebase/firestore`).
-- **Autentisering:** Firebase Authentication (Stöd för Google OAuth2 och E-post/Lösenord).
-- **Lagring av Filer:** Firebase Cloud Storage (för uppladdning av annonsbilder och kvitton).
-- **Artificiell Intelligens (AI):** Google Gemini 1.5 Flash hanterat via ramverket Google Genkit (används via Next.js Server Actions).
-- **Integritet & Typning:** TypeScript används genomgående i hela applikationen för att säkerställa att all data är strikt mallad.
+## 1. Executive Summary & Affärslogik
+AutoLog är en "Trust-First"-plattform designad för att eliminera fusk på fordonsmarknaden (mätarskruvning, förfalskade stämplar). Genom att kombinera kryptografisk låsning av identiteter, decentraliserad dataverifiering via anslutna bilverkstäder, och AI-driven OCR-teknik för legacy-papper, skapas en oföränderlig (immutable) fordonsjournal. 
+
+Plattformen agerar som en PWA (Progressive Web App) med "omni-channel"-stöd (desktop, tablet, mobil) ifrån en och samma kodbas, byggd för att fungera i realtid.
 
 ---
 
-## 3. Datamodeller & Databasstruktur (Firebase Firestore)
-Hela systemets data sparas i en central rot-katalog i Firestore under sökvägen `/artifacts/{projectId}/public/data/` och `/artifacts/{projectId}/users/`. Följande är de exakta TypeScript-modeller (Interfaces) som systemet bygger på:
+## 2. Arkitektur & Teknisk Stack
+
+Systemet tillämpar en "Serverless" och "Edge-first" arkitektur för att minimera underhåll av infrastruktur och maximera global prestanda.
+
+- **Frontend / Rendering:** Next.js 15 (App Router). Systemet nyttjar stenhårt gränsdragningen mellan **React Server Components (RSC)** för tunga datahämtningar/SEO och **Client Components** för interaktivt UI.
+- **Gränssnitt / UI:** Tailwind CSS för utility-first styling, Radix UI för tillgängliga (a11y) headless-komponenter, och Framer Motion/CSS-transitions för micro-interaktioner.
+- **Backend-as-a-Service (BaaS):** Firebase. Vi utnyttjar Firebase Firestore (NoSQL) för realtids-synkronisering via WebSockets, och Firebase Storage för BLOB-lagring.
+- **Autentisering:** Firebase Auth (JWT-baserad sessionshantering baserat på Google OAuth2 & E-post).
+- **AI-Implementation:** Google Gemini 1.5 Flash via ramverket Genkit. Körs isolerat i Next.js Server Actions för att dölja API-nycklar och promt-logik från klienten.
+- **Bygge & Typning:** 100% Strict TypeScript. All data som lämnar eller går in i databasen definieras via gemensamma interfaces.
+- **Hosting / CI/CD:** Netlify Edge. Varje git-push till `main` triggar en pre-render build (`npm run build`). API-routes och Server Actions distribueras till serverlösa funktioner (AWS Lambda via Netlify).
+
+---
+
+## 3. Datamodellering (NoSQL & Firestore)
+Firestore är en dokumentbaserad NoSQL-databas. Till skillnad från relationella databaser (SQL) som bygger på `JOIN`-operationer, använder AutoLog dataduplicering och hierarkisk häckning (Sub-collections) för att optimera läshastighet (O(1) lookups på klientsidan). All data isoleras i en rot-nod: `/artifacts/{projectId}/`.
 
 ### A. Användarprofiler (`UserProfile`)
-Sparas i kollektionen: `public_profiles`
-- `id` (string): Samma som Firebase Auth UID.
-- `email` (string): Användarens inloggnings-epost.
-- `name` (string): Visningsnamn.
-- `userType` ('CarOwner' | 'Workshop'): Avgör om det är en vanlig person eller ett företag.
-- `organizationNumber` (string): För verkstäder.
-- `role` ('Admin' | 'Användare' | 'Huvudadmin' | 'Moderator'): Administrativa titlar.
-- `permissions` (string[]): Lista över exakta rättigheter (se avsnittet om Rättigheter nedan).
-- `isForumBanned` (boolean): Flagga om användaren får skriva i forumet.
+Samling: `public_profiles`
+- `id` (string): PK (Primary Key) knuten till Auth UID.
+- `userType` ('CarOwner' | 'Workshop'): Styr domänspecifik affärslogik för klienten.
+- `permissions` (string[]): En array av specifika rättigheter. (Istället för att bara ha rollen "Admin" tillämpas detaljerad RBAC-logik, t.ex. `MANAGE_USERS`, `VIEW_AUDIT_LOGS`).
 
-### B. Fordon (`Vehicle`)
-Sparas i kollektionen: `cars` (samt speglas under `users/{ownerId}/vehicles`).
-Fordon identifieras alltid genom sitt registreringsnummer (`licensePlate`) som görs om till stora bokstäver utan mellanslag först.
-- `ownerId` (string | null): Användar-ID på den aktuella ägaren.
-- `make`, `model`, `year` (string/number): Bilens grundfakta.
-- `currentOdometerReading` (number): Bilens absolut senaste miltal (anges i svenska Mil, där 1 mil = 10 km).
-- `isPublished` (boolean): Sann om bilen ligger ute på Marknadsplatsen.
-- `price`, `description`, `adMainImage`, `adImageUrls`: Data som knyts till försäljningsannonsen.
-- `status` ('private' | 'for-sale' | 'sold'): Bilens handelsstatus.
-- `pendingTransferTo` / `pendingTransferFrom`: Hanterar logiken när Ägare A ska överföra bilen till Ägare B.
+### B. GDPR & Raderade Konton (`DeletedProfile`)
+Samling: `deleted_profiles`
+I enlighet med GDPR raderas personuppgifter (PII) omedelbart vid kontoradering (Right to be forgotten). För att inte bryta applikationens referensintegritet (ex. gamla foruminlägg) behåller systemet Post-ID:t men pekar om det till en anonymiserad profil.
+- `email`: Hårdkodad till `raderad.enligt@gdpr.com`.
+- `name`: `Raderad Användare`.
+- Detta hanteras atomärt i molnet.
 
-### C. Servicehistorik (`VehicleLog`)
-Sparas i under-kollektionen: `vehicleHistory/{licensePlate}/logs/{logId}`
-- `category` ('Service' | 'Reparation' | 'Däck' | 'Besiktning' | 'Uppgradering' | 'Ägarbyte' | 'Egen Service')
-- `date` (string): Datumet arbetet utfördes.
-- `odometer` (number): Miltalet när arbetet gjordes. Måste vara logiskt rimligt gentemot `currentOdometerReading`.
-- `verificationSource` ('User' | 'AI' | 'Workshop' | 'Official'): Vem/vad som intygar loggen.
-- `approvalStatus` ('pending' | 'approved' | 'rejected'): Om loggen är inväntande godkännande.
-- `isVerified` (boolean): Resultatet om en verkstad eller AI godkänt loggen.
-- `creatorId`, `ownerId`: Vilken inloggad person som skapade posten samt vem som ägde bilen just den millisekunden.
+### C. Fordon (`Vehicle`)
+Samling: `cars` (Speglas även under användarens privata sub-collection för extremt snabba vy-renderingar på instrumentpanelen).
+- `licensePlate` (string): Fordonets PK (alltid uppercase, trimmad).
+- `currentOdometerReading` (number): Miltalet spåras state-fullt. Systemet förkastar per automatik alla nya journalinlägg som försöker understiga "inspectionFloorOdometer" (systemets låsta mätargolv) för att förhindra bakåtskruvning.
+- `pendingTransferTo`: Kärnan i "Handshake"-protokollet för ägarbyte.
 
-### D. Konversationer & Chatt (`Conversation`)
-Sparas i kollektionen: `conversations`
-- Används för både Marknadsplatsen (köpare pratar med säljare) och Direktmeddelanden via inkorgen.
-- Spårar `participants` (array av UID), `lastMessage`, `unreadBy` (array av UID som ej läst).
-- Varje konversation har en under-kollektion `/messages/` som lagrar individuella chattbubblor med avsändare och tidsstämpel.
+### D. Fordonsjournal / Loggar (`VehicleLog`)
+Samling: `vehicleHistory/{licensePlate}/logs/{logId}`
+- Innehåller data om Service, Besiktning, Ägarbyte.
+- `trustLevel` beräknas dynamiskt i frontend utifrån en avancerad algoritm: Är det utfört av Workshop (Guld), AI-skannat papper (Silver) eller egenpåhittat via Användare (Brons)? Beräknar även tids-delta mellan uppladdning och utfört datum för att bestraffa retroaktiv inläggning.
+- **Säkerhetsanmärkning (`hasStoragePhoto` vs `photoUrl`):** Vi lagrar *aldrig* base64-kvitton i själva dokumentet. Se avsnitt 6 angående WebSocket-säkerhet.
 
 ---
 
-## 4. AI-avläsning av dokument (OCR via Google Gemini)
-När en användare laddar upp ett besiktningspapper eller verkstadskvitto:
-1. **Frontend:** Bilden base64-kodas i webbläsaren.
-2. **Server Action:** Den navigeras till `src/ai/flows/verify-vehicle-plate.ts`. (Koden måste köras under direktivet `'use server'`).
-3. **AI-Prompt:** Gemini 1.5 Flash tar emot bilden tillsammans med en starkt konfigurerad AI-Prompt. Prompten instruerar modellen att ignorera grafiska ramar och fält, och kräver utdata strikt i JSON-format.
-4. **Extraktion:** AI:n scannar efter:
-   - Registreringsnummer (`licensePlate`).
-   - Mätarställning (`odometer`) - AI:n har i uppdrag att konvertera eventuella kilometer till svenska mil.
-   - Avslöjar falsariet: Om det ser ut som en handritad fusklapp eller ett word-dokument, sätter AI:n `isInspectionDocument` till `false`.
-5. **Autovalidering:** På servern jämförs koden mot det reg-nummer `expectedPlate` användaren påstår sig ladda upp för. Stämmer det sätts status till automatgodkänd.
+## 4. Säkerhet, Zero-Trust Architecture & Data-läckage
+Systemet är designat utifrån premissen att *klienten alltid är komprometterad*. Om en säkerhetsregel enbart finns i React (t.ex. att dölja en knapp med `if (!isAdmin)`), klassas den som värdelös. All verifiering sker på moln-nivå.
+
+### A. WebSocket "Payload Sniffing" & Lösningen
+Tidigare fanns en enorm sårbarhet: Om ett kvitto lagrades som en Base64-sträng eller Okrypterad "Download URL" inuti logg-dokumentet i Firestore, streamades den datan ner till klienten via Firebase WebSockets (`onSnapshot`). En skicklig användare kunde trycka F12 (DevTools) och läsa ut kvitton på andras bilar.
+
+**Lösningen (Enterprise Pattern):**
+1. När en verkstad laddar upp ett kvitto, fångar frontenden den bilden och laddar upp den som en ren BLOB till en isolerad Firebase Storage Bucket under `/receipts/{plate}/{logId}`.
+2. Firestore-dokumentet får enbart flaggan `hasStoragePhoto: true`. (Ingen Base64-data skickas någonsin i websockets).
+3. **Storage Security Rules:** Storage Bucketen är skyddad av Firebase Security Rules. När en klient begär kvittot från Storage-servern, exekverar molnet backend-regeln:
+   ```javascript
+   firestore.get(/databases/.../logs/$(docId)).data.ownerId == request.auth.uid
+   ```
+4. Är man inte registrerad ägare till bilen, returnerar Storage-servern HTTP 403 Forbidden. F12-verktyg är totalt ineffektiva mot detta. Biltjuvar eller snokare kan absolut aldrig se ett privat kvitto.
+
+(Notis: Filen "DeepSystemScan" i Adminpanelen har befogenhet att svepa över existerande gammal data och komprimera/migrera den in till Storage-klasserna automatiskt).
+
+### B. Transaktionssäkerhet (Batch Writes & ACID)
+Vid processer som ägarbyte byter kritiska nycklar plats på flera platser i databasen samtidigt. AutoLog använder alltid Firestore `writeBatch` (Atomic Operations) för detta. Antingen går hela ägarbytet igenom i sin helhet på millisekunden, eller så misslyckas det totalt om uppkopplingen bryts. Data hamnar aldrig i ett korrupt "mellanläge".
+
+### C. Total Aktivitetslogg (Audit Trail)
+Systemet tillämpar absolut tystnadslöfte-brytande mot administratörer. Varje knapptryck i adminpanelen (Banning av användare, radering av forum-kommentarer, eller ens att *klicka upp redigeringsvyn för en bil*) fyrar omedelbart av händelsen till samlingen `admin_audit_logs`. Huvudadministratören kan därmed med extrem granularitet se exakt vem i personalen som gjort vad och varför.
 
 ---
 
-## 5. Rättigheter, Roller & Administrationspanel (RBAC)
-Behörighetshantering är decentraliserat och baseras inte på enbart en sträng-variabel som "Admin", utan ett flexibelt Array-system av specifika förmågor inuti `UserProfile`. Central logik ligger i `src/lib/permissions.ts`.
-
-### A. Den Absoluta Ägaren (Huvudadmin)
-E-postadressen `apersson508@gmail.com` är hårdkodad i systemet under variabeln `SYSTEM_OWNER_EMAIL`. Denna person är osynlig för nedgraderingar och har evig behörighet till 100% av applikationens funktioner (databasens gud-läge).
-
-### B. Behörighetstangenter (Permission Keys)
-Vanliga administratörer och moderatorer blir tilldelade unika befogenheter:
-- `MANAGE_USERS`: Kan blockera (Banna) eller permanent radera andra användarprofiler.
-- `VIEW_AUDIT_LOGS`: Kan se aktivitetsloggen över vilka knappar andra administratörer har tryckt på.
-- `MANAGE_VEHICLES`: Får tillgång till knappen för "Skarp Hård Radering" av valfri bil i databasen.
-- `MANAGE_MARKETPLACE`: Får befogenhet att ta bort andras olämpliga fordonsannonser från marknadsplatsen.
-- `MANAGE_MILEAGE`: Får godkänna eller neka användarnas begäran om att sänka eller tvinga en ändring av en bils miltalsmätare.
-- `MANAGE_PERSONNEL`: Kan rekrytera vanlig personal till nya administratörer.
-- `MANAGE_FORUM`: Kan radera forumtrådar och portförbjuda användare från forumet.
-- `RUN_SYSTEM_TOOLS`: Tillåter körning av applikationens rensningsverktyg och skript.
-
-### C. Adminpanelen (`src/app/admin/page.tsx`)
-Renderas endast om kommandot `canViewAdminPanel()` returnerar Sant. Den bygger på en tab-navigering (Flik-system) anpassat för mobiler via flexbox. Beroende på vilka `permissions` du har i din profil renderas olika flikar synliga. Alla administrativa beslut skickas till en "Mutor", funktionen `logAdminAction()`, så att Huvudadmin kan spåra *Vem* som gjorde *Vad*, *När*.
+## 5. Artificiell Intelligens (RPA & OCR-Pipeline)
+När traditionella papperskvitton ska digitaliseras har användarna absolut noll tålamod för manuell datainmatning. AutoLog tillämpar en AI-pipeline i tre steg:
+1. **Intag:** Bilden skickas från klienten via Next.js Server Action till Google Gemini 1.5 Flash (Optimerad för multi-modal hastighet).
+2. **Contextual Prompting:** Prompten, definierad i serverkoden, tvingar LLM:en att formatera sina svar som validerad JSON. Promt engineering tvingar AI:n att förkasta handritade lappar (`isInspectionDocument: false`).
+3. **Sanering:** Servern normaliserar utdatan (tvingar km till mil) och verifierar registreringsnumret (Computer Vision cross-check) innan den skickar en godkänd "AI-stämpel" tillbaka till databasen. På grund av detta nekas manuellt manipulerade mätarställningar.
 
 ---
 
-## 6. Säkerhet & Privata Dokument (GDPR & Data Låsning)
-Fordon byter ägare, men kvittot på kamremsbytet innehåller den ursprungliga ägarens personuppgifter. Den digitala överlåtelsen säkerställer att bilen får spara sin "Gröna Barm" (Verifierat av AI / Verkstad) men bilden göms:
-1. Under skapelsen av Loggen låses `ownerId` och `creatorId` fast inuti Firestore dokumentet för alltid.
-2. Frontenden `history-list.tsx` kollar alltid av `log.ownerId === currentUser.uid`. Om resultatet är falskt döljs nedladdningsknappen för originalkvittot.
-3. Systemets underliggande databassäkerhet (Firebase Storage Rules) säkerställer att ingen utomstående kan gissa URL:en till originalkvittot och ladda ner den genom en REST/Fetch-metod, då Storage Rule aktivt nekar ("Permission Denied") alla begärningar där inloggningstoken inte stämmer överens med filens egna instans-metadata.
+## 6. Frontend & Reaktiva UX-beslut
+- **State Management:** Vi förlitar oss nästan uteslutande på "Server State" via Firebase hooks (`useCollection`, `useDoc`). Klient-State begränsas till strikta UI-tillstånd, vilket eliminerar Redux boilerplate.
+- **Formfactor Responsive Pattern:** Vissa element, som Admin-layouten, visade sig vara omöjliga att tvinga in på mobila skärmar via traditionell CSS media-querying av Flexbox utan horisontell scroll-buggning. Därför modifierar vi DOM-trädet adaptivt: Vertikal Stackning (`flex-col`) på mobiler (garanterad Y-scroll och tryckyta) vs Tag-Cloud Wrappers (`flex-wrap`) på Desktops. Funktionalitet överrider "DRY" (Don't Repeat Yourself) när användarupplevelsen kräver det.
 
----
+Denna arkitektur garanterar en blixtsnabb, moln-nativ plattform med extrem säkerhetspostur, redo att skala horisontellt för hundratusentals fordon.
 
-## 7. Överlåtelse av Fordon (Ägarbyte)
-För att förhindra biltjyveri eller felklickningar bygger ägarbytet på "Handskakningsprincipen":
-1. **Initiativ:** Den nuvarande ägaren går till fordonet och väljer "Ny ägare". Skriver in mottagarens e-postadress.
-2. **Databas-Locking:** Systemet uppdaterar `pendingTransferTo` på fordonet till mottagarens ID, och lägger in `pendingTransferFrom` på en tvilling-variabel i användarens träd.
-3. **Mottagarsidan:** Mottagaren loggar in och blir bemött av en dialogruta "Du har en väntande överlåtelse".
-4. **Godkännande:** Klickar mottagaren ja, flyttas pekarna över. Mottagarens ID skrivs in över Systemets `cars/{licensePlate} ownerId`. Transaktionen utförs som en Batch-Write, så att processen är 100% atomisk (antingen genomförs allt på millisekunden, eller inget alls vid avbrott).
-
----
-
-## 8. Fil- och Katalogstruktur
-Här är en exakt ritning över de viktigaste katalogerna man navigerar i som utvecklare:
-
-- `src/app/`: Next.js 15 routing (App Router). Varje mapp inuti representerar en URL.
-  - `(auth)/`: Sidor relaterade till Logga in / Bli Medlem. Undersidor för inloggningsportalen.
-  - `dashboard/`: Bilägarens/verkstadens inloggade hemsida. Visar Mina bilar.
-  - `admin/`: Mappen som skapar `domain.com/admin`. Panelen för administratörer.
-  - `v/[id]/`: Publika bilningsprofiler "domain.com/v/MJN072". Visar fordonsfakta och historia.
-  - `inbox/`: Privatmeddelanden och konversationer mellan säljare/köpare.
-  - `market/`: Marknadsplatsens front-sida (Sök, filtrera annonserade bilar).
-  - `forum/`: Gemenskapens diskussionsforum.
-- `src/components/`: Återanvändbara React-element (Knappar, Modaler, Fordonskort `vehicle-card.tsx`).
-- `src/components/ui/`: Genererade Shadcn UI komponenter (grundläggande byggklossar som `alert-dialog.tsx`, `tabs.tsx`, o.s.v.).
-- `src/firebase/`:
-  - `config.ts`: Initialisering av appen (håller environment variables och bootar Firebase kluster).
-  - `index.ts`: Exporterar React Hooks (t.ex. `useUser()`, `useFirestore()`, `useCollection()`).
-- `src/lib/`: Hjälpfunktioner. Framförallt `permissions.ts` och the `utils.ts` för Tailwind klassammanslagningar.
-- `src/types/`: Central placering av Typings, `autolog.ts` (Datamodellerna listade ovan).
-- `src/ai/`:
-  - `genkit.ts`: Initierar sambandet mellan maskinen och Googles servrar. Laddas med API-nyckel.
-  - `flows/`: Separerbara procedurer för att lösa specifika problem med AI ('verify-vehicle-plate', 'extract-receipt-data').
-
----
-
-## 9. Drift, Hosting och PWA (Progressive Web App)
-- **Klient-hosting (Värd):** Koden hostas på plattformen **Netlify**. Varje uppdatering till GitHub Grenen (`main`) utlöser "Continuous Deployment", vilket bygger om projektet via kommandot `npm run build` och sprider ut statiska filer till servrar världen över (Edge computing).
-- **Environment Variables (Miljövariabler):** Kritiska nycklar som `NEXT_PUBLIC_FIREBASE_API_KEY` och `GEMINI_API_KEY` måste läggas upp manuellt inuti Netlifys inställningar. Utan dessa kommer AI-tjänsterna (eller själva databasen) att returnera "400 Bad Request" och falla pladask.
-- **PWA (Applikation för Mobil Formfaktor):** Projektet är optimerat för att installeras tekniskt osynligt direkt på slutanvändarens telefon. Genom webb-filen `manifest.webmanifest` kommunicerar systemet med iOS/Android att tjänsten ska betraktas som en fristående ("standalone") applikation (Ingen URL-fält, egen ikon, specifik laddskärm).
-
----
-
-## 10. Kända Felsökningsfaktorer
-- **Horisontell Scrollning:** I flexbox-sammanhang under Tailwind CSS (`src/components/ui/tabs.tsx`), om en list av komponenter slöar sig utanför skärmen på den mobila visningen måste containern ställas in med `justify-start` kombinerat med `w-full overflow-x-auto`. Aldrig `justify-center`, då webbläsaren trycker den avklippta informationen osynlig bakom skärmkanten vilket omöjliggör scrollning.
-- **Rules Error i Firestore / Permission Denied:** Om webbläsaren stannar upp helt när en servern ("Next.js API" eller AI Action) ska manipulera en bil, beror det ofta på att Next.js inte förmedlar the lokala inloggningstekniken över till Google API:t. Lösningen i dagsläget är att godkännandet av en manipulerad post ska ske enbart efter att AI:n svarat positivt, fast returnerat godkännandet som ett rent JSON-objekt för klientkoden att utföra sista Write-uppdateringen mot databasen. Alternativt bör det ställas upp med en Server Admin SDK (Firebase Cloud Functions).
-
-Denna dokumentation representerar AutoLog till 100 procent. Både layouten, modellerna, besluten och felkorrigeringarna är avsedda att möjliggöra det ultimata fordonssystemet för alla målgrupper och plattformen agerar absolut i realtid tack vare Firebase teknologin.
+Denna dokumentation representerar AutoLog till 100 procent. Både layouten, modellerna, loggningssystemet, GDPR-anonymiseringarna och rollsystemet är avsedda att möjliggöra det ultimata fordonssystemet för alla målgrupper och plattformen agerar absolut i realtid tack vare Firebase teknologin.

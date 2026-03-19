@@ -8,8 +8,9 @@ import { HistoryList, calculateOverallTrust, TRUST_CONFIG } from '@/components/h
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from '@/components/ui/carousel';
-import { useUser, useFirestore, useCollection, useMemoFirebase, useDoc } from '@/firebase';
+import { useUser, useFirestore, useCollection, useMemoFirebase, useDoc, useStorage } from '@/firebase';
 import { doc, collection, updateDoc, deleteDoc, serverTimestamp, writeBatch, onSnapshot, getDocs, query, where } from 'firebase/firestore';
+import { ref, uploadString } from 'firebase/storage';
 import { firebaseConfig } from '@/firebase/config';
 import { Vehicle, VehicleLog, TrustLevel, UserProfile } from '@/types/autolog';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -46,6 +47,7 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
   const { id } = use(params);
   const searchParams = useSearchParams();
   const db = useFirestore();
+  const storage = useStorage();
   const { user } = useUser();
   const router = useRouter();
   const { toast } = useToast();
@@ -175,21 +177,36 @@ export default function PrivateVehicleProfile({ params }: { params: Promise<{ id
     if (!user || !db || !vehicle) return;
     try {
       const batch = writeBatch(db);
+      
+      let finalPhotoUrl = newLog.photoUrl || null;
+      let hasStoragePhoto = newLog.hasStoragePhoto || false;
+      const logId = editingLog?.id || doc(collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs')).id;
+
+      if (finalPhotoUrl && finalPhotoUrl.startsWith('data:image/') && storage) {
+        const storageRef = ref(storage, `receipts/${plate}/${logId}`);
+        await uploadString(storageRef, finalPhotoUrl, 'data_url');
+        finalPhotoUrl = null;
+        hasStoragePhoto = true;
+      }
+
       const logData = { 
         ...newLog, 
+        id: logId,
         vehicleId: plate, 
         licensePlate: plate, 
         creatorId: user.uid, 
         creatorName: user.displayName || 'Ägare', 
         ownerId: vehicle.ownerId, 
         approvalStatus: 'approved',
+        photoUrl: finalPhotoUrl,
+        hasStoragePhoto: hasStoragePhoto,
         updatedAt: serverTimestamp()
       };
 
       if (editingLog) {
-        batch.update(doc(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs', editingLog.id), logData);
+        batch.update(doc(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs', logId), logData);
       } else {
-        batch.set(doc(collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs')), { ...logData, createdAt: serverTimestamp() });
+        batch.set(doc(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs', logId), { ...logData, createdAt: serverTimestamp() });
       }
       
       // Beräkna ny tillit efter sparning

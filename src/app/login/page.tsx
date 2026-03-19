@@ -92,7 +92,16 @@ function LoginForm() {
         const userCredential = await signInWithEmailAndPassword(auth, email, password);
         const user = userCredential.user;
         
+        const batch = writeBatch(db);
         const profileRef = doc(db, 'artifacts', appId, 'public', 'data', 'public_profiles', user.uid);
+        const userRef = doc(db, 'artifacts', appId, 'users', user.uid, 'profiles', 'user-profile');
+        
+        try {
+          batch.update(profileRef, { lastLoginAt: serverTimestamp() });
+          batch.update(userRef, { lastLoginAt: serverTimestamp() });
+          await batch.commit();
+        } catch(err) { console.error('Last login update failed', err); }
+
         const profileSnap = await getDoc(profileRef);
         
         if (profileSnap.exists() && profileSnap.data().userType === 'Workshop') {

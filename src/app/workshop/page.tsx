@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react';
 import { useUser, useFirestore, useMemoFirebase, useDoc, useCollection, useStorage } from '@/firebase';
 import { collection, doc, getDoc, getDocs, writeBatch, serverTimestamp, query, where, addDoc } from 'firebase/firestore';
+import { ref, uploadString } from 'firebase/storage';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -21,6 +22,7 @@ import { calculateOverallTrust } from '@/components/history-list';
 export default function WorkshopPage() {
   const { user, isUserLoading } = useUser();
   const db = useFirestore();
+  const storage = useStorage();
   const { toast } = useToast();
   const router = useRouter();
   const appId = firebaseConfig.projectId;
@@ -171,7 +173,7 @@ export default function WorkshopPage() {
     }
   };
 
-  const handleLogSubmit = async (newLog: Partial<VehicleLog>) => {
+    const handleLogSubmit = async (newLog: Partial<VehicleLog>) => {
     if (!user || !vehicle || !db) return;
     setLoading(true);
     try {
@@ -180,6 +182,16 @@ export default function WorkshopPage() {
       const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs');
       const logId = editingLog?.id || doc(logsRef).id;
       const logDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'vehicleHistory', plate, 'logs', logId);
+
+      let finalPhotoUrl = newLog.photoUrl || null;
+      let hasStoragePhoto = newLog.hasStoragePhoto || false;
+
+      if (finalPhotoUrl && finalPhotoUrl.startsWith('data:image/') && storage) {
+        const storageRef = ref(storage, `receipts/${plate}/${logId}`);
+        await uploadString(storageRef, finalPhotoUrl, 'data_url');
+        finalPhotoUrl = null;
+        hasStoragePhoto = true;
+      }
 
       const logData = {
         id: logId,
@@ -193,8 +205,8 @@ export default function WorkshopPage() {
         odometer: newLog.odometer,
         cost: newLog.cost || null,
         notes: newLog.notes || '',
-        photoUrl: newLog.photoUrl || null,
-        hasStoragePhoto: false,
+        photoUrl: finalPhotoUrl,
+        hasStoragePhoto: hasStoragePhoto,
         isVerified: true, 
         approvalStatus: 'pending',
         verificationSource: 'Workshop',

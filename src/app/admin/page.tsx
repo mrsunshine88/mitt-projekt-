@@ -2,8 +2,9 @@
 "use client";
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { useUser, useFirestore, useCollection, useMemoFirebase, useDoc, useAuth } from '@/firebase';
+import { useUser, useFirestore, useCollection, useMemoFirebase, useDoc, useAuth, useStorage } from '@/firebase';
 import { collection, doc, deleteDoc, updateDoc, setDoc, writeBatch, getDoc, getDocs, query, where, serverTimestamp, onSnapshot } from 'firebase/firestore';
+import { ref, uploadString } from 'firebase/storage';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -26,9 +27,11 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { PublishVehicleDialog } from '@/components/publish-vehicle-dialog';
 import { testAiConnection } from '@/ai/flows/test-connection';
+import { EditVehicleDialog } from '@/components/edit-vehicle-dialog';
 export default function AdminPage() {
   const { user, isUserLoading } = useUser();
   const db = useFirestore();
+  const storage = useStorage();
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState('users');
   const [refreshKey, setRefreshKey] = useState(0);
@@ -47,6 +50,9 @@ export default function AdminPage() {
   const [isEditAdOpen, setIsEditAdOpen] = useState(false);
   const [selectedAdForEdit, setSelectedAdForEdit] = useState<Vehicle | null>(null);
 
+  // States för redigering av fordon i admin
+  const [isEditVehicleOpen, setIsEditVehicleOpen] = useState(false);
+
   const appId = firebaseConfig.projectId;
   const adminProfileRef = useMemoFirebase(() => {
     if (!db || !user) return null;
@@ -64,6 +70,7 @@ export default function AdminPage() {
   const canPersonnel = hasPermission(adminProfile, user?.email, 'MANAGE_PERSONNEL');
   const canForum = hasPermission(adminProfile, user?.email, 'MANAGE_FORUM');
   const canTools = hasPermission(adminProfile, user?.email, 'RUN_SYSTEM_TOOLS');
+  const canDeleted = hasPermission(adminProfile, user?.email, 'MANAGE_DELETED_ACCOUNTS');
 
   // Switch to the first available tab if they don't have access to users
   useEffect(() => {
@@ -76,8 +83,9 @@ export default function AdminPage() {
       else if (canPersonnel) setActiveTab('personnel');
       else if (canLogs) setActiveTab('audit');
       else if (canTools) setActiveTab('systemverktyg');
+      else if (canDeleted) setActiveTab('deleted');
     }
-  }, [canUsers, adminProfile, isSystemOwner, activeTab, canMarketplace, canForum, canMileage, canVehicles, canPersonnel, canLogs, canTools]);;
+  }, [canUsers, adminProfile, isSystemOwner, activeTab, canMarketplace, canForum, canMileage, canVehicles, canPersonnel, canLogs, canTools, canDeleted]);;
 
   const listingsRef = useMemoFirebase(() => {
     if (!db) return null;
@@ -96,6 +104,12 @@ export default function AdminPage() {
     return collection(db, 'artifacts', appId, 'public', 'data', 'bannedUsers');
   }, [db, appId, refreshKey]);
   const { data: bannedUsers } = useCollection<any>(bannedRef);
+
+  const deletedRef = useMemoFirebase(() => {
+    if (!db) return null;
+    return collection(db, 'artifacts', appId, 'public', 'data', 'deleted_profiles');
+  }, [db, appId, refreshKey]);
+  const { data: deletedUsers } = useCollection<any>(deletedRef);
 
   const correctionsRef = useMemoFirebase(() => {
     if (!db) return null;
@@ -267,36 +281,41 @@ export default function AdminPage() {
       </header>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <div className="w-full relative">
-          <TabsList className="bg-white/5 border border-white/10 p-1 flex flex-nowrap justify-start w-full overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] snap-x snap-mandatory rounded-2xl">
-            {canUsers && <TabsTrigger value="users" className="shrink-0 px-6 whitespace-nowrap snap-center rounded-xl">Användare</TabsTrigger>}
+        <div className="w-full sm:overflow-x-auto sm:pb-4">
+          <TabsList className="flex flex-col sm:flex-row sm:flex-nowrap gap-2 sm:gap-2 justify-start sm:justify-start bg-transparent border-none p-0 w-full sm:w-max h-auto rounded-none">
+            {canUsers && <TabsTrigger value="users" className="w-full sm:w-auto px-6 py-3 sm:px-4 sm:py-2 text-base sm:text-sm whitespace-normal sm:whitespace-nowrap rounded-xl bg-white/5 data-[state=active]:bg-blue-600 data-[state=active]:text-white font-bold transition-all">Användare</TabsTrigger>}
             
-            {canVehicles && <TabsTrigger value="vehicles" className="shrink-0 px-6 whitespace-nowrap snap-center rounded-xl">Fordon</TabsTrigger>}
+            {canVehicles && <TabsTrigger value="vehicles" className="w-full sm:w-auto px-6 py-3 sm:px-4 sm:py-2 text-base sm:text-sm whitespace-normal sm:whitespace-nowrap rounded-xl bg-white/5 data-[state=active]:bg-blue-600 data-[state=active]:text-white font-bold transition-all">Fordon</TabsTrigger>}
           {canMileage && (
-            <TabsTrigger value="corrections" className="flex-1 rounded-xl relative">
+            <TabsTrigger value="corrections" className="w-full sm:w-auto px-6 py-3 sm:px-4 sm:py-2 text-base sm:text-sm whitespace-normal sm:whitespace-nowrap rounded-xl bg-white/5 data-[state=active]:bg-blue-600 data-[state=active]:text-white font-bold transition-all relative">
               Miltal
               {pendingCorrections.length > 0 && (
-                <span className="absolute -top-1 -right-1 h-4 w-4 bg-red-500 rounded-full text-[10px] flex items-center justify-center font-bold animate-pulse">{pendingCorrections.length}</span>
+                <span className="absolute right-4 sm:top-0 sm:right-0 sm:-translate-y-1/3 sm:translate-x-1/3 top-1/2 -translate-y-1/2 h-5 w-5 sm:h-4 sm:w-4 bg-red-500 rounded-full text-[9px] flex items-center justify-center animate-pulse text-white">{pendingCorrections.length}</span>
               )}
             </TabsTrigger>
           )}
           
-          {canMarketplace && <TabsTrigger value="listings" className="shrink-0 px-6 whitespace-nowrap snap-center rounded-xl">Marknadsplats</TabsTrigger>}
-          {canForum && <TabsTrigger value="forum" className="shrink-0 px-6 whitespace-nowrap snap-center rounded-xl">Forum Moderering</TabsTrigger>}
+          {canMarketplace && <TabsTrigger value="listings" className="w-full sm:w-auto px-6 py-3 sm:px-4 sm:py-2 text-base sm:text-sm whitespace-normal sm:whitespace-nowrap rounded-xl bg-white/5 data-[state=active]:bg-blue-600 data-[state=active]:text-white font-bold transition-all">Marknadsplats</TabsTrigger>}
+          {canForum && <TabsTrigger value="forum" className="w-full sm:w-auto px-6 py-3 sm:px-4 sm:py-2 text-base sm:text-sm whitespace-normal sm:whitespace-nowrap rounded-xl bg-white/5 data-[state=active]:bg-blue-600 data-[state=active]:text-white font-bold transition-all">Forum Moderering</TabsTrigger>}
           
           {canPersonnel && (
-            <TabsTrigger value="personnel" className="shrink-0 px-6 whitespace-nowrap snap-center rounded-xl bg-accent/10 data-[state=active]:bg-accent data-[state=active]:text-black font-bold">
+            <TabsTrigger value="personnel" className="w-full sm:w-auto px-6 py-3 sm:px-4 sm:py-2 text-base sm:text-sm whitespace-normal sm:whitespace-nowrap rounded-xl bg-accent/20 data-[state=active]:bg-accent data-[state=active]:text-black text-accent font-bold transition-all">
               Personal
             </TabsTrigger>
           )}
           {canTools && (
-            <TabsTrigger value="systemverktyg" className="shrink-0 px-6 whitespace-nowrap snap-center rounded-xl bg-slate-500/10 data-[state=active]:bg-slate-500 data-[state=active]:text-white font-bold">
+            <TabsTrigger value="systemverktyg" className="w-full sm:w-auto px-6 py-3 sm:px-4 sm:py-2 text-base sm:text-sm whitespace-normal sm:whitespace-nowrap rounded-xl bg-slate-500/20 data-[state=active]:bg-slate-500 data-[state=active]:text-white text-slate-300 font-bold transition-all">
               Systemverktyg
             </TabsTrigger>
           )}
           {canLogs && (
-            <TabsTrigger value="audit" className="shrink-0 px-6 whitespace-nowrap snap-center rounded-xl bg-purple-500/10 data-[state=active]:bg-purple-500 data-[state=active]:text-white font-bold">
+            <TabsTrigger value="audit" className="w-full sm:w-auto px-6 py-3 sm:px-4 sm:py-2 text-base sm:text-sm whitespace-normal sm:whitespace-nowrap rounded-xl bg-purple-500/20 data-[state=active]:bg-purple-500 data-[state=active]:text-white text-purple-300 font-bold transition-all">
               Aktivitetslogg
+            </TabsTrigger>
+          )}
+          {canDeleted && (
+            <TabsTrigger value="deleted" className="w-full sm:w-auto px-6 py-3 sm:px-4 sm:py-2 text-base sm:text-sm whitespace-normal sm:whitespace-nowrap rounded-xl bg-red-500/20 data-[state=active]:bg-red-500 data-[state=active]:text-white text-red-400 font-bold transition-all">
+              Raderade konton
             </TabsTrigger>
           )}
         </TabsList>
@@ -349,9 +368,14 @@ export default function AdminPage() {
                           <p className="text-sm text-muted-foreground">Ägare: {foundVehicle.ownerName || 'Okänd'}</p>
                         </div>
                       </div>
-                      <div className="flex gap-3">
+                      <div className="flex flex-wrap gap-3">
                         <Button asChild variant="outline" className="rounded-xl h-12 px-6"><Link href={`/dashboard/vehicle/${foundVehicle.licensePlate}?mode=admin`} onClick={() => logAdminAction('OPENED_VEHICLE_PROFILE', foundVehicle.licensePlate, 'Gick in på fordonsprofil i admin-läge')}>Hantera profil <ArrowRight className="ml-2 w-4 h-4" /></Link></Button>
-                        
+                        <Button variant="outline" className="rounded-xl h-12 px-6 border-blue-500/30 text-blue-400 hover:bg-blue-500/10" onClick={() => {
+                          setIsEditVehicleOpen(true);
+                          if (logAdminAction) logAdminAction('OPENED_VEHICLE_EDIT', foundVehicle.licensePlate || foundVehicle.id || 'Okänd', 'Öppnade redigeringsvyn för ett fordon i admin-läge');
+                        }}>
+                          <Edit3 className="w-4 h-4 mr-2" /> Redigera
+                        </Button>
                         <AlertDialog>
                           <AlertDialogTrigger asChild>
                             <Button variant="destructive" className="h-12 px-6 rounded-xl font-bold">
@@ -392,6 +416,7 @@ export default function AdminPage() {
                     </div>
                   </div>
                 )}
+                
               </Card>
             </TabsContent>
         )}
@@ -504,7 +529,7 @@ export default function AdminPage() {
                   <p className="text-muted-foreground text-sm py-10 text-center">Inga administrativa händelser registrerade ännu.</p>
                 ) : (
                   <div className="overflow-x-auto w-full">
-                    <Table>
+                    <Table className="min-w-[700px]">
                       <TableHeader>
                         <TableRow className="border-white/5">
                           <TableHead>Tidpunkt</TableHead>
@@ -545,6 +570,12 @@ export default function AdminPage() {
             </TabsContent>
         )}
 
+        {canDeleted && (
+            <TabsContent value="deleted" className="space-y-6">
+              <DeletedUserManager deletedUsers={deletedUsers || []} bannedUsers={bannedUsers || []} logAdminAction={logAdminAction} />
+            </TabsContent>
+        )}
+
         {canMarketplace && (
             <TabsContent value="listings">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -565,7 +596,7 @@ export default function AdminPage() {
                       asChild 
                       className="text-blue-400 hover:bg-blue-400/10"
                     >
-                      <Link href={`/v/${l.id || l.licensePlate}`} target="_blank">
+                      <Link href={`/v/${l.id || l.licensePlate}`} onClick={() => logAdminAction('OPENED_MARKETPLACE_AD', l.licensePlate || l.id || 'Okänd', 'Öppnade annons på Marknadsplatsen i admin-läge')}>
                         <Eye className="w-4 h-4" />
                       </Link>
                     </Button>
@@ -609,6 +640,14 @@ export default function AdminPage() {
           isAdminEdit={true}
         />
       )}
+
+      {foundVehicle && (
+        <EditVehicleDialog 
+          isOpen={isEditVehicleOpen} 
+          onClose={() => setIsEditVehicleOpen(false)} 
+          vehicle={foundVehicle} 
+        />
+      )}
     </div>
   );
 }
@@ -649,12 +688,25 @@ function UserManager({ currentUserEmail, users, bannedUsers, canManageRoles, log
     toast({ title: "Användare återställd" });
   };
 
-  const handleDeleteUser = async (userId: string) => {
+  const handleDeleteUser = async (u: any) => {
     if (!db) return;
     try {
-      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'public_profiles', userId));
-      if(logAdminAction) await logAdminAction('DELETED_USER', userId, 'Raderade användarprofil');
-      toast({ title: "Användarprofil raderad från systemet" });
+      const batch = writeBatch(db);
+      
+      const deletedRef = doc(db, 'artifacts', appId, 'public', 'data', 'deleted_profiles', u.id);
+      batch.set(deletedRef, {
+        id: u.id,
+        email: 'raderad.enligt@gdpr.com',
+        name: 'Raderad Användare',
+        deletedAt: serverTimestamp(),
+        deletedBy: 'admin',
+      });
+      
+      batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'public_profiles', u.id));
+      await batch.commit();
+
+      if(logAdminAction) await logAdminAction('DELETED_USER', u.email, `Raderade användarprofil för ${u.name}`);
+      toast({ title: "Användarprofil raderad & flyttad till Raderade Konton" });
     } catch (err: any) { toast({ variant: "destructive", title: "Fel", description: err.message }); }
   };
 
@@ -729,7 +781,7 @@ function UserManager({ currentUserEmail, users, bannedUsers, canManageRoles, log
                                 <AlertDialogHeader><AlertDialogTitle>Radera {u.name}?</AlertDialogTitle><AlertDialogDescription>Detta tar bort deras profil permanent från systemet. Det påverkar inte deras autentisering (login), men de kommer inte ha någon profil kvar.</AlertDialogDescription></AlertDialogHeader>
                                 <AlertDialogFooter>
                                   <AlertDialogCancel>Avbryt</AlertDialogCancel>
-                                  <AlertDialogAction onClick={() => handleDeleteUser(u.id)} className="bg-destructive">Radera profil</AlertDialogAction>
+                                  <AlertDialogAction onClick={() => handleDeleteUser(u)} className="bg-destructive">Radera profil</AlertDialogAction>
                                 </AlertDialogFooter>
                               </AlertDialogContent>
                             </AlertDialog>
@@ -798,6 +850,8 @@ function ManagePermissionsDialog({ user, onClose, db, appId, logAdminAction }: a
     }
   }, [user]);
 
+
+
   if (!user) return null;
 
   const handleSave = async () => {
@@ -851,8 +905,89 @@ function ManagePermissionsDialog({ user, onClose, db, appId, logAdminAction }: a
   );
 }
 
+function DeletedUserManager({ deletedUsers, bannedUsers, logAdminAction }: any) {
+  const db = useFirestore();
+  const appId = firebaseConfig.projectId;
+  const { toast } = useToast();
+
+  const handleBanDeleted = async (u: any, isBanned: boolean) => {
+    if (!db) return;
+    try {
+      if (isBanned) {
+        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'bannedUsers', u.id));
+        if(logAdminAction) await logAdminAction('UNBANNED_DELETED_USER', u.email, `Hävde blockering för raderad användare (ID: ${u.id})`);
+        toast({ title: `Spärren hävd för ${u.name}` });
+      } else {
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'bannedUsers', u.id), {
+          id: u.id, name: u.name, bannedAt: serverTimestamp(), reason: 'Administrativ åtgärd från Raderade konton'
+        });
+        if(logAdminAction) await logAdminAction('BANNED_DELETED_USER', u.email, `Blockerade tidigare raderad användare (ID: ${u.id})`);
+        toast({ title: `${u.name} har permanent blockerats` });
+      }
+    } catch (err: any) { toast({ variant: "destructive", title: "Fel", description: err.message }); }
+  };
+
+  const handleRemoveLog = async (u: any) => {
+    if (!db) return;
+    try {
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'deleted_profiles', u.id));
+      toast({ title: "Kontot avfört från loggen" });
+    } catch (err: any) { toast({ variant: "destructive", title: "Fel", description: err.message }); }
+  };
+
+  return (
+    <Card className="glass-card border-none overflow-hidden rounded-3xl p-6 bg-[#0f172a] border-slate-800">
+      <div className="flex items-center gap-3 mb-6">
+        <UserCheck className="w-5 h-5 text-red-400" />
+        <h3 className="text-lg font-bold text-white">Inaktiva / Raderade konton</h3>
+      </div>
+      <p className="text-sm text-muted-foreground mb-6">Dessa profiler har tagits bort från systemet, men loggnings-ID:t vilar fortfarande. Du kan spärra inlogget, eller häva en befintlig spärr. Går ej att använda "Glöm bort" på spärrade konton då säkerhetsloggen måste vara intakt.</p>
+      
+      {deletedUsers.length === 0 ? (
+        <p className="text-muted-foreground text-sm py-10 text-center">Inga inaktiva konton i loggen.</p>
+      ) : (
+        <div className="overflow-x-auto w-full">
+          <Table className="min-w-[700px]">
+            <TableHeader><TableRow className="border-white/5"><TableHead>Tidpunkt</TableHead><TableHead>Användare</TableHead><TableHead>E-post</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Åtgärd</TableHead></TableRow></TableHeader>
+            <TableBody>
+              {deletedUsers.map((u: any) => {
+                const isBanned = bannedUsers.some((b: any) => b.id === u.id);
+                return (
+                <TableRow key={u.id} className={`border-white/5 hover:bg-white/5 ${isBanned ? 'bg-red-500/5' : ''}`}>
+                  <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                    {u.deletedAt?.toDate ? format(u.deletedAt.toDate(), 'yyyy-MM-dd HH:mm', {locale: sv}) : 'Nyligen'}
+                  </TableCell>
+                  <TableCell className="font-bold text-sm">{u.name}</TableCell>
+                  <TableCell className="text-sm opacity-70">{u.email}</TableCell>
+                  <TableCell>
+                    {isBanned ? (
+                      <Badge variant="outline" className="bg-red-500/10 text-red-400 border-red-500/20">Spärrad 🚫</Badge>
+                    ) : (
+                      <Badge variant="outline" className={u.deletedBy === 'self' ? "bg-orange-500/10 text-orange-400 border-orange-500/20" : "bg-blue-500/10 text-blue-400 border-blue-500/20"}>{u.deletedBy === 'self' ? 'Självraderad' : 'Admin'}</Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-2 items-center">
+                       {!isBanned && <Button size="sm" variant="ghost" onClick={() => handleRemoveLog(u)} className="h-9 px-3 text-muted-foreground hover:text-white">Glöm bort</Button>}
+                       <Button size="sm" variant={isBanned ? "outline" : "destructive"} onClick={() => handleBanDeleted(u, isBanned)} className={`h-9 px-4 font-bold ${isBanned ? 'border-green-500/50 text-green-400 hover:text-green-300 hover:bg-green-500/10' : ''}`}>
+                         {isBanned ? <><UserCheck className="w-4 h-4 mr-2" /> Häv spärr</> : <><Ban className="w-4 h-4 mr-2" /> Spärra inlogg</>}
+                       </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function ImageCompressor() {
   const db = useFirestore();
+  const storage = useStorage();
   const { toast } = useToast();
   const [isScanning, setIsScanning] = useState(false);
   const [progressText, setProgressText] = useState('Redo att söka...');
@@ -949,10 +1084,17 @@ function ImageCompressor() {
           if (logData.photoUrl?.startsWith('data:image/')) {
             scanned++;
             setStats({ scanned, compressed, skipped });
-            const res = await processImage(logData.photoUrl);
-            if (res.needed) {
-              compressed++;
-              await updateDoc(logSnap.ref, { photoUrl: res.newUri });
+            
+            if (storage) {
+              try {
+                const storageRef = ref(storage, `receipts/${docSnap.id}/${logSnap.id}`);
+                await uploadString(storageRef, logData.photoUrl, 'data_url');
+                await updateDoc(logSnap.ref, { photoUrl: null, hasStoragePhoto: true });
+                compressed++;
+              } catch(e) {
+                console.error("Storage migration failed", e);
+                skipped++;
+              }
             } else {
               skipped++;
             }
@@ -1026,12 +1168,23 @@ function ImageCompressor() {
           Skannar allt (Fordon, Annonser, Profiler, Loggar inkl. Kvitton) och krymper bilder.
         </p>
 
-        {isScanning && (
-          <div className="space-y-2 mb-6 text-sm font-mono text-slate-300">
-            <p className="text-cyan-400">{progressText}</p>
-            <p>Kontrollerade: {stats.scanned}</p>
-            <p>Krympta: {stats.compressed}</p>
-            <p>Hoppade över: {stats.skipped}</p>
+        {isScanning ? (
+          <div className="space-y-2 mb-6 text-sm font-mono text-slate-300 bg-black/20 p-4 rounded-xl">
+            <p className="text-cyan-400 font-bold mb-2 flex items-center gap-2"><Loader2 className="w-3 h-3 animate-spin"/> {progressText}</p>
+            <p className="flex justify-between"><span>Kontrollerade:</span><span className="font-bold">{stats.scanned}</span></p>
+            <p className="flex justify-between"><span>Krympta:</span><span className="font-bold text-green-400">{stats.compressed}</span></p>
+            <p className="flex justify-between"><span>Hoppade över:</span><span className="font-bold">{stats.skipped}</span></p>
+          </div>
+        ) : (stats.scanned > 0 || progressText.includes('fel') || progressText.includes('Alla')) && (
+          <div className="space-y-2 mb-6 text-sm font-mono text-cyan-400 bg-cyan-900/20 p-4 rounded-xl border border-cyan-800/50">
+            <p className="font-bold flex items-center gap-2"><CheckSquare className="w-4 h-4"/> {progressText}</p>
+            {stats.scanned > 0 && (
+              <div className="mt-2 pt-2 border-t border-cyan-800/30 space-y-1">
+                <p className="flex justify-between text-slate-300"><span>Kontrollerade:</span><span className="font-bold">{stats.scanned}</span></p>
+                <p className="flex justify-between text-green-400"><span>Krympta:</span><span className="font-bold">{stats.compressed}</span></p>
+                <p className="flex justify-between text-slate-400"><span>Hoppade över:</span><span className="font-bold">{stats.skipped}</span></p>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1066,9 +1219,13 @@ function DeepSystemScan() {
       const listingsSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'public_listings'));
       const convosSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'conversations'));
       const correctionsSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'odometer_corrections'));
+      const bannedSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'bannedUsers'));
+      const deletedSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'deleted_profiles'));
       
       const carsMap = new Map(carsSnap.docs.map(d => [d.id, { id: d.id, ...d.data() }]));
       const profileIds = new Set(profilesSnap.docs.map(d => d.id));
+      const bannedIds = new Set(bannedSnap.docs.map(d => d.id));
+      const deletedIds = new Set(deletedSnap.docs.map(d => d.id));
       const activeUids = new Set<string>();
 
       carsMap.forEach((c: any) => c.ownerId && activeUids.add(c.ownerId));
@@ -1200,7 +1357,7 @@ function DeepSystemScan() {
         }
       });
       for (const uid of Array.from(activeUids)) {
-        if (!profileIds.has(uid) && uid.length > 5) {
+        if (!profileIds.has(uid) && !deletedIds.has(uid) && !bannedIds.has(uid) && uid.length > 5) {
           batch.set(doc(db, 'artifacts', appId, 'public', 'data', 'public_profiles', uid), {
             id: uid, name: 'Återställd Användare', email: 'ghost@recovery.local', role: 'Användare', createdAt: serverTimestamp(), isGhostRecovered: true
           });
@@ -1280,7 +1437,41 @@ function DeepSystemScan() {
       await _commit();
       if (migratedAdmins > 0) appendLog(`  -> Migrerade ${migratedAdmins} administratskonton till nya behörighetssystemet.`);
 
-      const totalF = odometerFixes + carGuardFixes + missingGarage + orphanedGarage + spAds + delChats + staleCorr + brokProf + ghost + brokenPosts + brokenComments + orphanedComments + migratedAdmins;
+      appendLog('> Steg 13: Synkronisering av Verkstäder...');
+      let missingWorkshops = 0;
+      let orphanedWorkshops = 0;
+      const workshopsSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'workshops'));
+      workshopsSnap.docs.forEach(w => {
+        if (!profileIds.has(w.id)) {
+           batch.delete(w.ref);
+           orphanedWorkshops++;
+           opCount++;
+        }
+      });
+      await _commit();
+      if (orphanedWorkshops > 0) appendLog(`  -> Raderade ${orphanedWorkshops} verkstäder för raderade användare.`);
+
+      appendLog('> Steg 14: Bibehåller säkerhets-spärrar permanent...');
+      await _commit();
+
+      appendLog('> Steg 15: Synkroniserar och anonymiserar raderade konton (GDPR)...');
+      let anonymizedGDPR = 0;
+      const gdprDeletedSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'deleted_profiles'));
+      gdprDeletedSnap.docs.forEach(d => {
+        const data = d.data();
+        if (data.email !== 'raderad.enligt@gdpr.com' || data.name !== 'Raderad Användare') {
+          batch.update(d.ref, {
+            email: 'raderad.enligt@gdpr.com',
+            name: 'Raderad Användare'
+          });
+          anonymizedGDPR++;
+          opCount++;
+        }
+      });
+      await _commit();
+      if (anonymizedGDPR > 0) appendLog(`  -> Anonymiserade ${anonymizedGDPR} äldre raderade konton.`);
+
+      const totalF = odometerFixes + carGuardFixes + missingGarage + orphanedGarage + spAds + delChats + staleCorr + brokProf + ghost + brokenPosts + brokenComments + orphanedComments + migratedAdmins + orphanedWorkshops + anonymizedGDPR;
       if (totalF === 0) {
         appendLog('> RESULTAT: Systemet var redan 100% friskt. 0 fel hittades.');
       } else {
@@ -1299,10 +1490,10 @@ function DeepSystemScan() {
       <div>
         <div className="flex items-center gap-3 mb-4">
           <Database className="w-5 h-5 text-blue-500" />
-          <h3 className="text-sm font-bold tracking-widest text-blue-500 uppercase">Deep System Scan V10.0</h3>
+          <h3 className="text-sm font-bold tracking-widest text-blue-500 uppercase">Deep System Scan V13.0</h3>
         </div>
         <p className="text-sm text-slate-400 mb-6">
-          Självläkning (Ägarskap, Mätargolv, GDPR, Annonser, CarGuard, Profiler, Medlemskonton, Rättighetsmigration).
+          Självläkning (Mätargolv, Chattar, Annonser, Profiler, Medlemskonton, Rättighetsmigration, Verkstäder, Blockeringar & Raderade).
         </p>
 
         {logs.length > 0 && (

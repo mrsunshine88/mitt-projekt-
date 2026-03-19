@@ -11,6 +11,7 @@ export const PERMISSIONS = {
   MANAGE_PERSONNEL: 'MANAGE_PERSONNEL',
   MANAGE_FORUM: 'MANAGE_FORUM',
   RUN_SYSTEM_TOOLS: 'RUN_SYSTEM_TOOLS',
+  MANAGE_DELETED_ACCOUNTS: 'MANAGE_DELETED_ACCOUNTS',
 } as const;
 
 export type PermissionKey = keyof typeof PERMISSIONS;
@@ -24,6 +25,7 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   MANAGE_PERSONNEL: 'Personal & Rättigheter',
   MANAGE_FORUM: 'Moderera Forumet (Radera & Spärra)',
   RUN_SYSTEM_TOOLS: 'Kör Systemverktyg (Deep Scan, Krymp Bytes)',
+  MANAGE_DELETED_ACCOUNTS: 'Hantera Raderade Konton (Spärra ut)',
 };
 
 export const hasPermission = (profile: UserProfile | null | undefined, email: string | null | undefined, permission: PermissionKey): boolean => {

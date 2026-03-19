@@ -178,6 +178,15 @@ export default function SettingsPage() {
         batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'public_listings', plate));
       });
 
+      const deletedRef = doc(db, 'artifacts', appId, 'public', 'data', 'deleted_profiles', user.uid);
+      batch.set(deletedRef, {
+        id: user.uid,
+        email: 'raderad.enligt@gdpr.com',
+        name: 'Raderad Användare',
+        deletedAt: serverTimestamp(),
+        deletedBy: 'self'
+      });
+
       batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'public_profiles', user.uid));
       batch.delete(doc(db, 'artifacts', appId, 'users', user.uid, 'profiles', 'user-profile'));
       
