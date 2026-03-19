@@ -65,6 +65,10 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
     model: '',
     year: new Date().getFullYear(),
     currentOdometerReading: 0,
+    fuelType: 'Bensin',
+    gearbox: 'Automat',
+    hp: 0,
+    color: '',
   });
 
   const checkExistingVehicle = async (plateInput: string) => {
@@ -273,7 +277,7 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
   };
 
   const resetForm = () => { 
-    setFormData({ licensePlate: '', make: '', model: '', year: new Date().getFullYear(), currentOdometerReading: 0 }); 
+    setFormData({ licensePlate: '', make: '', model: '', year: new Date().getFullYear(), currentOdometerReading: 0, fuelType: 'Bensin', gearbox: 'Automat', hp: 0, color: '' }); 
     setStep('info'); 
     setPhotoPreview(null); 
     setInspectionDoc(null);
@@ -288,10 +292,10 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
         <div className="p-6">
           <DialogHeader className="mb-4">
             <DialogTitle className="text-2xl font-headline flex items-center gap-2">
-              {step === 'info' ? 'Lägg till fordon' : step === 'confirm-odometer' ? 'Bekräfta mätare' : step === 'ready' ? 'Klart att spara' : 'Ladda upp bild'}
+              {step === 'info' ? 'Lägg till fordon' : step === 'confirm-odometer' ? 'Bekräfta mätare' : step === 'ready' ? 'Klart att spara' : (isScanning ? 'Ladda upp Besiktningspapper' : 'Ladda upp en bild på din bil')}
             </DialogTitle>
             <DialogDescription>
-              {step === 'confirm-odometer' ? 'Kontrollera att miltalet stämmer. Det går inte att ändra efteråt.' : `Fyll i uppgifter för din ${formData.licensePlate || 'bil'}.`}
+              {step === 'confirm-odometer' ? 'Kontrollera att miltalet stämmer. Det går inte att ändra efteråt.' : step === 'photo-choice' || step === 'camera' ? (isScanning ? `Ladda upp ett tydligt foto på det senaste besiktningsprotokollet för ${formData.licensePlate || 'bilen'}.` : `Ladda upp en snygg bild på din ${formData.licensePlate || 'bil'}. Detta syns på bilens profilsida.`) : `Fyll i uppgifter för din ${formData.licensePlate || 'bil'}.`}
             </DialogDescription>
           </DialogHeader>
 
@@ -364,6 +368,32 @@ export function AddVehicleDialog({ isOpen, onClose }: { isOpen: boolean; onClose
                       />
                       {existingHistoryFound && <Lock className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 opacity-40" />}
                     </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold uppercase opacity-60 ml-1">Växellåda</Label>
+                    <Select value={formData.gearbox} onValueChange={(v: string) => setFormData({...formData, gearbox: v})}>
+                      <SelectTrigger className="bg-white/5 h-12 rounded-xl"><SelectValue /></SelectTrigger>
+                      <SelectContent><SelectItem value="Automat">Automat</SelectItem><SelectItem value="Manuell">Manuell</SelectItem></SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold uppercase opacity-60 ml-1">Bränsle</Label>
+                    <Select value={formData.fuelType} onValueChange={(v: string) => setFormData({...formData, fuelType: v})}>
+                      <SelectTrigger className="bg-white/5 h-12 rounded-xl"><SelectValue /></SelectTrigger>
+                      <SelectContent><SelectItem value="Bensin">Bensin</SelectItem><SelectItem value="Diesel">Diesel</SelectItem><SelectItem value="El">El</SelectItem><SelectItem value="Hybrid">Hybrid</SelectItem></SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold uppercase opacity-60 ml-1">Effekt (hk)</Label>
+                    <Input type="number" value={formData.hp || ''} onChange={(e) => setFormData({...formData, hp: parseInt(e.target.value) || 0})} className="bg-white/5 h-12 rounded-xl" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold uppercase opacity-60 ml-1">Färg</Label>
+                    <Input value={formData.color} onChange={(e) => setFormData({...formData, color: e.target.value})} className="bg-white/5 h-12 rounded-xl" />
                   </div>
                 </div>
                 <Button onClick={() => setStep('confirm-odometer')} className="w-full h-14 rounded-2xl font-bold text-lg mt-4" disabled={!formData.licensePlate || !formData.make || isSearchingPlate || !!error || !inspectionDoc}>

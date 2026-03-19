@@ -13,6 +13,7 @@ import { firebaseConfig } from '@/firebase/config';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { NotificationBell } from './notification-bell';
+import { canViewAdminPanel } from '@/lib/permissions';
 
 const SYSTEM_OWNER_EMAIL = 'apersson508@gmail.com';
 
@@ -34,11 +35,7 @@ export function Navbar() {
 
   const { data: profile } = useDoc<UserProfile>(profileRef);
 
-  const isAdmin = useMemo(() => 
-    user?.email === SYSTEM_OWNER_EMAIL || 
-    profile?.role === 'Huvudadmin' || 
-    profile?.role === 'Moderator', 
-  [user, profile]);
+  const isAdmin = useMemo(() => canViewAdminPanel(profile, user?.email), [profile, user]);
 
   const isWorkshop = profile?.userType === 'Workshop';
 

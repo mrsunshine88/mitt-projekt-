@@ -212,7 +212,7 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
       const currentTrust = calculateOverallTrust(logs);
 
       const globalRef = doc(db, 'artifacts', appId, 'public', 'data', 'cars', plate);
-      const privateRef = doc(db, 'artifacts', appId, 'users', user.uid, 'vehicles', plate);
+      const privateRef = vehicle.ownerId ? doc(db, 'artifacts', appId, 'users', vehicle.ownerId, 'vehicles', plate) : null;
       const listingRef = doc(db, 'artifacts', appId, 'public', 'data', 'public_listings', plate);
       
       const updates: any = sanitize({ 
@@ -231,7 +231,9 @@ export function EditVehicleDialog({ isOpen, onClose, vehicle }: { isOpen: boolea
       }
       
       batch.update(globalRef, updates);
-      batch.update(privateRef, updates);
+      if (privateRef) {
+        batch.set(privateRef, updates, { merge: true });
+      }
 
       if (user.uid !== vehicle.ownerId || typeof window !== 'undefined' && window.location.search.includes('mode=admin')) {
         const adminLogRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'admin_audit_logs'));

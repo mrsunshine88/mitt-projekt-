@@ -51,5 +51,6 @@ export const canViewAdminPanel = (profile: UserProfile | null | undefined, email
   if (email === SYSTEM_OWNER_EMAIL) return true;
   if (!profile) return false;
   if (['Huvudadmin', 'Moderator', 'Admin'].includes(profile.role || '')) return true;
+  if (profile.permissions && profile.permissions.length > 0) return true;
   return false; 
 };

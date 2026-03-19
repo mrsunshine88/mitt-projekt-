@@ -13,6 +13,7 @@ import { collection, addDoc, serverTimestamp, doc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { firebaseConfig } from '@/firebase/config';
 import { UserProfile } from '@/types/autolog';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 
 const CATEGORIES = [
   "Allmänt",
@@ -61,9 +62,10 @@ export function CreatePostDialog({ isOpen, onClose }: { isOpen: boolean; onClose
         content: content.trim(),
         category,
         authorId: user.uid,
-        authorName: user.displayName || 'Anonym Användare',
-        authorPhoto: user.photoURL || null,
+        authorName: profile?.name || user.displayName || 'Anonym Användare',
+        authorPhoto: profile?.photoUrl || user.photoURL || null,
         likes: [],
+        likedByMap: {},
         commentCount: 0,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
@@ -97,6 +99,17 @@ export function CreatePostDialog({ isOpen, onClose }: { isOpen: boolean; onClose
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-6">
+              <div className="flex items-center gap-3 bg-white/5 p-4 rounded-2xl border border-white/10">
+                <Avatar className="w-10 h-10 border border-white/10 shrink-0">
+                  <AvatarImage src={profile?.photoUrl || user?.photoURL || undefined} className="object-cover" />
+                  <AvatarFallback className="bg-primary/20 text-primary font-bold">{profile?.name?.[0] || user?.displayName?.[0]}</AvatarFallback>
+                </Avatar>
+                <div>
+                  <p className="text-sm font-bold text-white">{profile?.name || user?.displayName || 'Anonym Användare'}</p>
+                  <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">Skapar nytt inlägg</p>
+                </div>
+              </div>
+
               <div className="space-y-4">
                 <div className="space-y-2">
                   <Label className="text-xs font-bold uppercase opacity-60 ml-1">Kategori</Label>

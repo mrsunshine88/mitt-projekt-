@@ -2,7 +2,7 @@
 
 import { use, useState, useEffect, useMemo } from 'react';
 import { useUser, useFirestore, useDoc, useMemoFirebase } from '@/firebase';
-import { doc, getDoc, collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, updateDoc, arrayUnion, arrayRemove, writeBatch, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, updateDoc, arrayUnion, arrayRemove, writeBatch, deleteDoc, deleteField } from 'firebase/firestore';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
@@ -16,6 +16,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { UserProfile } from '@/types/autolog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 export default function ForumPostPage({ params }: { params: Promise<{ id: string }> }) {
   const unwrappedParams = use(params);
@@ -78,10 +79,16 @@ export default function ForumPostPage({ params }: { params: Promise<{ id: string
     
     try {
       if (isLiked) {
-        await updateDoc(postRef, { likes: arrayRemove(user.uid) });
+        await updateDoc(postRef, { 
+          likes: arrayRemove(user.uid),
+          [`likedByMap.${user.uid}`]: deleteField()
+        });
       } else {
         const batch = writeBatch(db);
-        batch.update(postRef, { likes: arrayUnion(user.uid) });
+        batch.update(postRef, { 
+          likes: arrayUnion(user.uid),
+          [`likedByMap.${user.uid}`]: profile?.name || user.displayName || 'En användare'
+        });
 
         if (user.uid !== post.authorId) {
           const notifRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'user_notifications'));
@@ -108,10 +115,16 @@ export default function ForumPostPage({ params }: { params: Promise<{ id: string
     
     try {
       if (isLiked) {
-        await updateDoc(commentRef, { likes: arrayRemove(user.uid) });
+        await updateDoc(commentRef, { 
+          likes: arrayRemove(user.uid),
+          [`likedByMap.${user.uid}`]: deleteField()
+        });
       } else {
         const batch = writeBatch(db);
-        batch.update(commentRef, { likes: arrayUnion(user.uid) });
+        batch.update(commentRef, { 
+          likes: arrayUnion(user.uid),
+          [`likedByMap.${user.uid}`]: profile?.name || user.displayName || 'En användare'
+        });
 
         if (user.uid !== comment.authorId) {
           const notifRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'user_notifications'));
@@ -148,9 +161,10 @@ export default function ForumPostPage({ params }: { params: Promise<{ id: string
         postId: id,
         content: newComment.trim(),
         authorId: user.uid,
-        authorName: user.displayName || 'Anonym Användare',
-        authorPhoto: user.photoURL || null,
+        authorName: profile?.name || user.displayName || 'Anonym Användare',
+        authorPhoto: profile?.photoUrl || user.photoURL || null,
         likes: [],
+        likedByMap: {},
         createdAt: serverTimestamp()
       });
 
@@ -236,6 +250,7 @@ export default function ForumPostPage({ params }: { params: Promise<{ id: string
   if (!post && !loading) return <div className="text-center py-20"><h1 className="text-2xl font-bold">Inlägget hittades inte eller har blivit borttaget.</h1><Button asChild className="mt-8"><Link href="/forum">Tillbaka till forumet</Link></Button></div>;
 
   return (
+    <TooltipProvider delayDuration={200}>
     <div className="container max-w-4xl mx-auto px-4 py-8">
       <Button asChild variant="ghost" className="mb-6 -ml-4 text-slate-400 hover:text-white">
         <Link href="/forum"><ArrowLeft className="w-4 h-4 mr-2" /> Tillbaka till översikten</Link>
@@ -288,15 +303,33 @@ export default function ForumPostPage({ params }: { params: Promise<{ id: string
           </div>
 
           <div className="flex items-center justify-end gap-2 pt-4 border-t border-white/10">
-            <Button
-              variant={post.likes?.includes(user?.uid) ? "secondary" : "ghost"}
-              onClick={handleToggleLikePost}
-              disabled={!user}
-              className={`rounded-full h-12 px-6 gap-2 transition-all ${post.likes?.includes(user?.uid) ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' : 'text-slate-400 hover:text-white'}`}
-            >
-              <Heart className={`w-5 h-5 ${post.likes?.includes(user?.uid) ? 'fill-current' : ''}`} />
-              <span className="font-bold">{post.likes?.length || 0}</span>
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={post.likes?.includes(user?.uid) ? "secondary" : "ghost"}
+                  onClick={handleToggleLikePost}
+                  disabled={!user}
+                  className={`rounded-full h-12 px-6 gap-2 transition-all ${post.likes?.includes(user?.uid) ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' : 'text-slate-400 hover:text-white'}`}
+                >
+                  <Heart className={`w-5 h-5 ${post.likes?.includes(user?.uid) ? 'fill-current' : ''}`} />
+                  <span className="font-bold">{post.likes?.length || 0}</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent className="bg-slate-800 border-white/10 text-white">
+                <div className="text-sm font-medium space-y-1">
+                  {post.likes?.length > 0 ? (
+                    <>
+                      {Object.values(post.likedByMap || {}).map((name: any, i) => <div key={i}>{name}</div>)}
+                      {post.likes.length > Object.keys(post.likedByMap || {}).length && (
+                        <div className="opacity-60 italic">
+                          Och {post.likes.length - Object.keys(post.likedByMap || {}).length} äldre gillamarkeringar
+                        </div>
+                      )}
+                    </>
+                  ) : 'Inga gillamarkeringar än'}
+                </div>
+              </TooltipContent>
+            </Tooltip>
           </div>
         </div>
       </Card>
@@ -338,16 +371,32 @@ export default function ForumPostPage({ params }: { params: Promise<{ id: string
               </p>
 
               <div className="flex justify-end pt-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleToggleLikeComment(comment)}
-                  disabled={!user}
-                  className={`rounded-full h-8 px-3 gap-1.5 transition-all ${comment.likes?.includes(user?.uid) ? 'text-red-400 hover:text-red-300 hover:bg-red-500/10' : 'text-slate-500 hover:text-white'}`}
-                >
-                  <Heart className={`w-3.5 h-3.5 ${comment.likes?.includes(user?.uid) ? 'fill-current' : ''}`} />
-                  <span className="text-xs font-bold">{comment.likes?.length || 0}</span>
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleToggleLikeComment(comment)}
+                      disabled={!user}
+                      className={`rounded-full h-8 px-3 gap-1.5 transition-all ${comment.likes?.includes(user?.uid) ? 'text-red-400 hover:text-red-300 hover:bg-red-500/10' : 'text-slate-500 hover:text-white'}`}
+                    >
+                      <Heart className={`w-3.5 h-3.5 ${comment.likes?.includes(user?.uid) ? 'fill-current' : ''}`} />
+                      <span className="text-xs font-bold">{comment.likes?.length || 0}</span>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="bg-slate-800 border-white/10 text-white pb-1.5 pt-1.5">
+                    <div className="text-[10px] font-medium opacity-80 space-y-0.5">
+                      {comment.likes?.length > 0 ? (
+                        <>
+                          {Object.values(comment.likedByMap || {}).map((name: any, i) => <div key={i}>{name}</div>)}
+                          {comment.likes.length > Object.keys(comment.likedByMap || {}).length && (
+                            <div className="opacity-60 italic">+{comment.likes.length - Object.keys(comment.likedByMap || {}).length} andra</div>
+                          )}
+                        </>
+                      ) : 'Ingen har gillat än'}
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
               </div>
             </div>
           </div>
@@ -358,8 +407,8 @@ export default function ForumPostPage({ params }: { params: Promise<{ id: string
       {user ? (
         <div className="mt-8 flex gap-4">
           <Avatar className="w-10 h-10 border border-white/10 shrink-0">
-            <AvatarImage src={user.photoURL || undefined} className="object-cover" />
-            <AvatarFallback className="bg-primary/20 text-primary font-bold">{user.displayName?.[0]}</AvatarFallback>
+            <AvatarImage src={profile?.photoUrl || user.photoURL || undefined} className="object-cover" />
+            <AvatarFallback className="bg-primary/20 text-primary font-bold">{profile?.name?.[0] || user.displayName?.[0]}</AvatarFallback>
           </Avatar>
           <div className="flex-1 bg-white/5 border border-white/10 rounded-3xl p-4 pl-6 relative overflow-hidden focus-within:ring-2 ring-blue-500/50 transition-shadow">
             <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
@@ -404,5 +453,6 @@ export default function ForumPostPage({ params }: { params: Promise<{ id: string
         </div>
       )}
     </div>
+    </TooltipProvider>
   );
 }
