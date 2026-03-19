@@ -268,7 +268,7 @@ export default function AdminPage() {
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
         <div className="w-full relative">
-          <TabsList className="bg-white/5 border border-white/10 p-1 flex flex-nowrap w-full overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] snap-x snap-mandatory rounded-2xl">
+          <TabsList className="bg-white/5 border border-white/10 p-1 flex flex-nowrap justify-start w-full overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] snap-x snap-mandatory rounded-2xl">
             {canUsers && <TabsTrigger value="users" className="shrink-0 px-6 whitespace-nowrap snap-center rounded-xl">Användare</TabsTrigger>}
             
             {canVehicles && <TabsTrigger value="vehicles" className="shrink-0 px-6 whitespace-nowrap snap-center rounded-xl">Fordon</TabsTrigger>}
@@ -503,7 +503,7 @@ export default function AdminPage() {
                 {auditLogs.length === 0 ? (
                   <p className="text-muted-foreground text-sm py-10 text-center">Inga administrativa händelser registrerade ännu.</p>
                 ) : (
-                  <div className="overflow-x-auto">
+                  <div className="overflow-x-auto w-full">
                     <Table>
                       <TableHeader>
                         <TableRow className="border-white/5">
@@ -666,7 +666,7 @@ function UserManager({ currentUserEmail, users, bannedUsers, canManageRoles, log
   return (
     <div className="space-y-6">
       <Card className="glass-card border-none overflow-hidden rounded-3xl">
-        <div className="overflow-x-auto w-full min-w-full">
+        <div className="overflow-x-auto w-full">
           <Table className="min-w-[700px]">
             <TableHeader><TableRow className="border-white/5"><TableHead className="w-[45%]">Användare</TableHead><TableHead>E-post</TableHead><TableHead className="text-right">Åtgärder</TableHead></TableRow></TableHeader>
             <TableBody>
