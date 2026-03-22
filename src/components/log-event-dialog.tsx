@@ -211,6 +211,13 @@ export function LogEventDialog({
         if (errorMsg.includes('överbelastad') || errorMsg.includes('429')) {
           setAiMessage(null);
           setError("AI-motorn är för tillfället överbelastad (Google Maxkvot nådd för gratistjänsten). Vänligen vänta 60 sekunder och ladda upp bilden på nytt, eller fyll i fälten helt manuellt.");
+        } else if (errorMsg.includes('godkände inte bilden')) {
+          setAiMessage(null);
+          setPhotoUrl(null);
+          setIsVerifiedInspection(false);
+          setAiLockedDate(false);
+          setIsAiValidated(false);
+          setError("Bilden godkändes inte. Den ser inte ut som ett giltigt fordonkvitto/dokument. Vill du registrera manuellt utan bevis måste du byta kategori till 'Egen Service'.");
         } else {
           setAiMessage({ type: 'warning', title: 'Bild bifogad!', desc: 'Den automatiska text-avläsningen misslyckades. Vänligen läs in uppgifterna manuellt från bilden.' });
         }
