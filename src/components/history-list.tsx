@@ -236,7 +236,7 @@ export function HistoryList({ logs, showPrivateData = false, onEdit, onDelete, o
         
         return (
           <Card key={log.id} className={`glass-card border-none overflow-hidden rounded-[2.5rem] group transition-all ${isPending ? 'ring-2 ring-yellow-500/30 bg-yellow-500/5' : isOfficial ? 'ring-1 ring-primary/20' : 'hover:ring-1 ring-white/10'}`}>
-            <div className="p-6 md:p-8 flex flex-col sm:flex-row gap-6">
+            <div className="p-5 md:p-8 flex flex-col sm:flex-row gap-5 md:gap-6">
               <div className={`hidden sm:block w-2 rounded-full ${isPending ? 'bg-yellow-500' : isOfficial ? 'bg-primary' : 'bg-slate-700'}`} />
               
               <div className="flex-1 min-w-0">
@@ -298,32 +298,32 @@ export function HistoryList({ logs, showPrivateData = false, onEdit, onDelete, o
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
-                  <div className="bg-white/5 p-4 rounded-2xl border border-white/5">
-                    <span className="text-[10px] font-black opacity-40 uppercase block mb-1.5 tracking-wider">Mätarställning</span>
-                    <span className={`text-xl font-black ${isPending ? 'text-yellow-500' : 'text-primary'}`}>{log.odometer?.toLocaleString()} mil</span>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4 mb-6">
+                  <div className="bg-white/5 p-3 sm:p-4 rounded-2xl border border-white/5 min-w-0">
+                    <span className="text-[9px] sm:text-[10px] font-black opacity-40 uppercase block mb-1.5 tracking-wider truncate" title="Mätarställning">Mätarställning</span>
+                    <span className={`text-lg sm:text-xl font-black ${isPending ? 'text-yellow-500' : 'text-primary'}`}>{log.odometer?.toLocaleString()} mil</span>
                   </div>
-                  <div className="bg-white/5 p-4 rounded-2xl border border-white/5">
-                    <span className="text-[10px] font-black opacity-40 uppercase block mb-1.5 tracking-wider">Verifieringsdatum</span>
-                    <div className="flex items-center gap-2">
+                  <div className="bg-white/5 p-3 sm:p-4 rounded-2xl border border-white/5 min-w-0">
+                    <span className="text-[9px] sm:text-[10px] font-black opacity-40 uppercase block mb-1.5 tracking-wider truncate" title="Verifieringsdatum">Verifieringsdatum</span>
+                    <div className="flex items-center gap-1.5 sm:gap-2">
                       {isPending ? (
-                        <span className="text-[11px] font-bold text-yellow-500 uppercase">Väntar på godkännande</span>
+                        <span className="text-[10px] sm:text-[11px] font-bold text-yellow-500 uppercase">Väntar</span>
                       ) : (
                         <>
-                          <CalendarCheck className="w-4 h-4 text-green-500" />
-                          <span className="text-sm font-black uppercase">{sysDate && isValid(sysDate) ? format(sysDate, 'yyyy-MM-dd') : '---'}</span>
+                          <CalendarCheck className="w-3 h-3 sm:w-4 sm:h-4 text-green-500 shrink-0" />
+                          <span className="text-xs sm:text-sm font-black uppercase truncate">{sysDate && isValid(sysDate) ? format(sysDate, 'yyyy-MM-dd') : '---'}</span>
                         </>
                       )}
                     </div>
                   </div>
                   {canSeeSensitive && showPrivateData && log.cost ? (
-                    <div className="bg-white/5 p-4 rounded-2xl border border-white/5">
-                      <span className="text-[10px] font-black opacity-40 uppercase block mb-1.5 tracking-wider">Kostnad</span>
-                      <span className="text-xl font-black text-white">{log.cost.toLocaleString()} kr</span>
+                    <div className="bg-white/5 p-3 sm:p-4 rounded-2xl border border-white/5 min-w-0">
+                      <span className="text-[9px] sm:text-[10px] font-black opacity-40 uppercase block mb-1.5 tracking-wider truncate" title="Kostnad">Kostnad</span>
+                      <span className="text-lg sm:text-xl font-black text-white">{log.cost.toLocaleString()} kr</span>
                     </div>
                   ) : (
-                    <div className="bg-white/5 p-4 rounded-2xl border border-white/5 flex flex-col justify-center items-start">
-                       <span className="text-[10px] font-black opacity-20 uppercase block tracking-wider">Privat info</span>
+                    <div className="bg-white/5 p-3 sm:p-4 rounded-2xl border border-white/5 flex flex-col justify-center items-start min-w-0">
+                       <span className="text-[9px] sm:text-[10px] font-black opacity-20 uppercase block tracking-wider truncate">Privat info</span>
                        <Lock className="w-3.5 h-3.5 opacity-20 mt-1" />
                     </div>
                   )}

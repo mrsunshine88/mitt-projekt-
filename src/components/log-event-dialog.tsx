@@ -174,6 +174,7 @@ export function LogEventDialog({
 
   const handleImageSelection = async (dataUri: string) => {
     setLoading(true);
+    setError(null);
     try {
       const optimized = await processImage(dataUri);
       setPhotoUrl(optimized);
@@ -204,7 +205,7 @@ export function LogEventDialog({
         });
         if (aiResult.isInspection) setIsVerifiedInspection(true);
         setIsAiValidated(true);
-        setAiMessage({ type: 'success', title: 'AI Auto-ifyllt!', desc: 'Fälten fylldes i automatiskt. Kontrollera att allt stämmer innan du sparar.' });
+        setAiMessage({ type: 'success', title: 'AI Godkänt & Låst', desc: 'Fakta såsom pris, mätare och datum har låsts från kvittot. Du kan dock fortfarande ändra anteckningarna nedan om något saknas.' });
       } catch (aiError: any) {
         console.error("AI scanning failed:", aiError);
         const errorMsg = aiError.message || String(aiError);
@@ -298,7 +299,7 @@ export function LogEventDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={(o: boolean) => { if(!o) onClose(); }}>
-      <DialogContent className="sm:max-w-[500px] glass-card border-white/10 rounded-[2rem] p-6 max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-[calc(100%-2rem)] sm:w-full sm:max-w-[500px] glass-card border-white/10 rounded-[2rem] p-5 sm:p-6 max-h-[85svh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-2xl font-headline flex items-center gap-2">
             {isWorkshop ? 'Registrera service' : 'Logga händelse'}
@@ -354,7 +355,7 @@ export function LogEventDialog({
                 <div className="relative w-full h-full flex items-center justify-center overflow-hidden rounded-xl">
                   <img src={photoUrl} alt="Bifogat dokument" className="max-h-full object-contain" />
                 </div>
-                <Button variant="ghost" size="sm" type="button" onClick={() => { setPhotoUrl(null); setIsVerifiedInspection(false); setAiLockedDate(false); setAiMessage(null); setIsAiValidated(false); }} className="mt-2 h-8 text-[10px] uppercase font-bold tracking-widest">Byt bild</Button>
+                <Button variant="ghost" size="sm" type="button" onClick={() => { setPhotoUrl(null); setIsVerifiedInspection(false); setAiLockedDate(false); setAiMessage(null); setIsAiValidated(false); setError(null); }} className="mt-2 h-8 text-[10px] uppercase font-bold tracking-widest">Byt bild</Button>
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-3">
@@ -378,8 +379,8 @@ export function LogEventDialog({
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label className="text-xs uppercase opacity-60">Kategori</Label>
-              <Select value={formData.category} onValueChange={(v: string) => setFormData({...formData, category: v as ServiceCategory})}>
-                <SelectTrigger className="h-12 bg-white/5 rounded-xl border-white/10">
+              <Select disabled={isAiValidated} value={formData.category} onValueChange={(v: string) => setFormData({...formData, category: v as ServiceCategory})}>
+                <SelectTrigger className={`h-12 bg-white/5 rounded-xl border-white/10 ${isAiValidated ? 'opacity-50' : ''}`}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -395,19 +396,19 @@ export function LogEventDialog({
             </div>
             <div className="space-y-2">
               <Label className="text-xs uppercase opacity-60">Datum</Label>
-              <Input type="date" disabled={aiLockedDate} value={formData.date} className={`h-12 bg-white/5 rounded-xl border-white/10 ${aiLockedDate ? 'opacity-50 cursor-not-allowed' : ''}`} onChange={(e) => setFormData({...formData, date: e.target.value})} />
-              {aiLockedDate && <span className="text-[10px] text-green-400 font-bold block mt-1 absolute">Datumet är låst av AI-avläsning.</span>}
+              <Input type="date" disabled={isAiValidated || aiLockedDate} value={formData.date} className={`h-12 bg-white/5 rounded-xl border-white/10 ${(isAiValidated || aiLockedDate) ? 'opacity-50 cursor-not-allowed' : ''}`} onChange={(e) => setFormData({...formData, date: e.target.value})} />
+              {(isAiValidated || aiLockedDate) && <span className="text-[10px] text-green-400 font-bold block mt-1 absolute">Låst av AI-avläsning.</span>}
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label className={`text-xs uppercase ${isLowering && !isAdmin ? 'text-destructive font-bold' : 'opacity-60'}`}>Mätarställning (mil)</Label>
-              <Input type="number" className={`h-12 bg-white/5 rounded-xl ${isLowering && !isAdmin ? 'border-destructive ring-destructive/20' : 'border-white/10'}`} value={formData.odometer ?? ''} onChange={(e) => setFormData({...formData, odometer: parseInt(e.target.value) || 0})} required />
+              <Input type="number" disabled={isAiValidated} className={`h-12 bg-white/5 rounded-xl ${isLowering && !isAdmin ? 'border-destructive ring-destructive/20' : 'border-white/10'} ${isAiValidated ? 'opacity-50 cursor-not-allowed' : ''}`} value={formData.odometer ?? ''} onChange={(e) => setFormData({...formData, odometer: parseInt(e.target.value) || 0})} required />
             </div>
             <div className="space-y-2">
               <Label className="text-xs uppercase opacity-60">Kostnad (kr)</Label>
-              <Input type="number" className="h-12 bg-white/5 border-white/10 rounded-xl" value={formData.cost || ''} onChange={(e) => setFormData({...formData, cost: parseInt(e.target.value) || 0})} />
+              <Input type="number" disabled={isAiValidated} className={`h-12 bg-white/5 border-white/10 rounded-xl ${isAiValidated ? 'opacity-50 cursor-not-allowed' : ''}`} value={formData.cost || ''} onChange={(e) => setFormData({...formData, cost: parseInt(e.target.value) || 0})} />
             </div>
           </div>
 

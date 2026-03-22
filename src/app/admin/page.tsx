@@ -805,17 +805,17 @@ function UserManager({ currentUserEmail, users, bannedUsers, canManageRoles, log
           <div className="flex flex-col gap-3 relative z-10">
             {recentUsers.length > 0 ? recentUsers.map((ru: any) => (
               <div key={ru.id} className="bg-white/5 p-4 rounded-2xl flex items-center justify-between gap-4 border border-white/5 hover:bg-white/10 transition-colors">
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-4 min-w-0">
                   <Avatar className="w-10 h-10 border border-white/10 rounded-full shrink-0">
                     <AvatarImage src={ru.photoUrl} className="object-cover" />
                     <AvatarFallback className="bg-primary/20 text-primary">{ru.name?.[0]}</AvatarFallback>
                   </Avatar>
-                  <div className="flex flex-col">
-                    <span className="font-bold text-sm leading-none">{ru.name}</span>
-                    <span className="text-[10px] text-muted-foreground mt-1.5">{ru.email}</span>
+                  <div className="flex flex-col min-w-0">
+                    <span className="font-bold text-sm leading-none truncate">{ru.name}</span>
+                    <span className="text-[10px] text-muted-foreground mt-1.5 truncate">{ru.email}</span>
                   </div>
                 </div>
-                <div className="bg-white/5 border border-white/10 rounded-full px-3 py-1 text-[10px] font-mono whitespace-nowrap">
+                <div className="bg-white/5 border border-white/10 rounded-full px-3 py-1 text-[10px] font-mono whitespace-nowrap shrink-0">
                   {ru.lastLoginAt?.toDate ? format(ru.lastLoginAt.toDate(), 'd MMM HH:mm', {locale: sv}) : 'Nyligen'}
                 </div>
               </div>
