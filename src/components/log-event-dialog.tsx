@@ -181,6 +181,11 @@ export function LogEventDialog({
       
       try {
         const aiResult = await extractReceiptData({ receiptImageDataUri: optimized });
+        
+        if (aiResult.isAuthenticReceipt === false) {
+          throw new Error('AI:n godkände inte bilden. Den ser inte ut som ett giltigt kvitto, arbetsorder eller besiktningspapper för ett fordon. Vänligen ladda upp ett riktigt dokument.');
+        }
+
         setFormData(prev => {
           const updated = { ...prev };
           if (aiResult.date) {

@@ -24,6 +24,7 @@ const ExtractReceiptDataOutputSchema = z.object({
   serviceSummary: z.string(),
   isInspection: z.boolean(),
   manipulationRisk: z.enum(['low', 'medium', 'high']),
+  isAuthenticReceipt: z.boolean(),
 });
 export type ExtractReceiptDataOutput = z.infer<typeof ExtractReceiptDataOutputSchema>;
 
@@ -38,6 +39,10 @@ const extractReceiptDataPrompt = ai.definePrompt({
   prompt: `Analysera detta fordonsdokument och extrahera data.
 Dokument: {{media url=receiptImageDataUri}}
 
+VIKTIG SÄKERHETSKONTROLL (isAuthenticReceipt):
+Steg 1 är att verifiera att bilden faktiskt är ett giltigt dokument (kvitto, faktura, arbetsorder eller besiktningspapper) relaterat till fordon/bilservice. 
+Om bilden föreställer ett TV-spel (t.ex. Ninjago eller liknande), en selfie, en naturbild, en bil utifrån, eller helt saknar typiska kvittodetaljer (som verkstadsnamn, datum, belopp eller fordonsrelaterad text) MÅSTE du sätta "isAuthenticReceipt" till false. Om den verkar vara ett äkta och relevant dokument, sätt till true.
+
 VIKTIGT OM MÄTARSTÄLLNING:
 Mätarställning ("odometerReading") MÅSTE konverteras till svenska MIL. Om det står i km i dokumentet (t.ex 191622 km), svara med 19162 (dela med 10, inga decimaler). Om du är osäker och det är mycket högt, utgå från att det är i km och konvertera till mil.
 
@@ -50,7 +55,8 @@ Svara enbart med rå JSON-data i detta format (ingen markdown, ingen text före 
   "totalCost": number,
   "serviceSummary": "beskrivning",
   "isInspection": boolean,
-  "manipulationRisk": "low" | "medium" | "high"
+  "manipulationRisk": "low" | "medium" | "high",
+  "isAuthenticReceipt": boolean
 }`,
 });
 
